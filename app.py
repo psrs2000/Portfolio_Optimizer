@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 # Título
-st.title("📊 Otimizador de Portfólio Markowitz")
+st.title("📊 Otimizador de Portfólio")
 st.markdown("*Baseado na metodologia da sua planilha Excel*")
 
 # Sidebar para upload
@@ -333,4 +333,4 @@ else:
 
 # Rodapé
 st.markdown("---")
-st.markdown("*Desenvolvido com Streamlit - Otimização Markowitz* 🚀")
+st.markdown("*Desenvolvido com Streamlit - Otimização Portifólio* 🚀")
