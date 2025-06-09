@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 from optimizer import PortfolioOptimizer
 
 # Configuração da página
@@ -24,7 +25,7 @@ with st.sidebar:
         help="Planilha com dados históricos dos ativos"
     )
 
-def create_monthly_returns_table(returns_data, weights, dates=None):
+def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_returns=None):
     """
     Cria tabela de retornos mensais do portfólio otimizado
     """
@@ -35,6 +36,10 @@ def create_monthly_returns_table(returns_data, weights, dates=None):
     portfolio_df = pd.DataFrame({
         'returns': portfolio_returns_daily
     }, index=range(len(portfolio_returns_daily)))
+    
+    # Adicionar taxa livre se disponível
+    if risk_free_returns is not None:
+        portfolio_df['risk_free'] = risk_free_returns.values
     
     # Usar datas reais se disponíveis, senão simular
     if dates is not None:
@@ -49,6 +54,11 @@ def create_monthly_returns_table(returns_data, weights, dates=None):
     # Converter retornos diários para retornos compostos mensais
     portfolio_df['returns_factor'] = 1 + portfolio_df['returns']
     monthly_returns = portfolio_df['returns_factor'].resample('M').prod() - 1
+    
+    # Calcular retornos mensais da taxa livre se disponível
+    if risk_free_returns is not None:
+        portfolio_df['risk_free_factor'] = 1 + portfolio_df['risk_free']
+        monthly_risk_free = portfolio_df['risk_free_factor'].resample('M').prod() - 1
     
     # Criar tabela pivotada (anos x meses)
     monthly_df = pd.DataFrame({
@@ -80,8 +90,35 @@ def create_monthly_returns_table(returns_data, weights, dates=None):
     
     pivot_table['Total Anual'] = yearly_returns
     
-    # Formatar como porcentagem
-    return pivot_table
+    # Se temos taxa livre, criar tabela comparativa
+    comparison_table = None
+    if risk_free_returns is not None:
+        # Criar tabela similar para taxa livre
+        rf_monthly_df = pd.DataFrame({
+            'Year': monthly_risk_free.index.year,
+            'Month': monthly_risk_free.index.month,
+            'Return': monthly_risk_free.values
+        })
+        
+        rf_pivot = rf_monthly_df.pivot(index='Year', columns='Month', values='Return')
+        rf_pivot.columns = [month_names.get(col, f'M{col}') for col in rf_pivot.columns]
+        
+        # Calcular total anual da taxa livre
+        rf_yearly = []
+        for year in rf_pivot.index:
+            year_data = rf_pivot.loc[year].dropna()
+            if len(year_data) > 0:
+                annual_return = (1 + year_data).prod() - 1
+                rf_yearly.append(annual_return)
+            else:
+                rf_yearly.append(np.nan)
+        
+        rf_pivot['Total Anual'] = rf_yearly
+        
+        # Criar tabela de comparação (excesso de retorno)
+        comparison_table = pivot_table - rf_pivot
+    
+    return pivot_table, comparison_table
 
 # Área principal
 if uploaded_file is not None:
@@ -96,12 +133,23 @@ if uploaded_file is not None:
             st.write(f"Dimensões: {df.shape[0]} linhas x {df.shape[1]} colunas")
             st.dataframe(df.head(10))
         
+        # Verificar se há taxa livre de risco na coluna B
+        has_risk_free = False
+        if len(df.columns) > 2 and isinstance(df.columns[1], str):
+            col_name = df.columns[1].lower()
+            if any(term in col_name for term in ['taxa', 'livre', 'risco', 'risk', 'free', 'cdi', 'selic']):
+                has_risk_free = True
+                st.info(f"📊 Taxa livre de risco detectada: '{df.columns[1]}'")
+        
         # Seleção de ativos
         st.header("🎯 Seleção de Ativos")
         
-        # Identificar colunas de ativos (excluindo primeira coluna se for data)
+        # Identificar colunas de ativos
         if isinstance(df.columns[0], str) and 'data' in df.columns[0].lower():
-            asset_columns = df.columns[1:].tolist()
+            if has_risk_free:
+                asset_columns = df.columns[2:].tolist()  # Ativos começam na coluna C
+            else:
+                asset_columns = df.columns[1:].tolist()  # Ativos começam na coluna B
         else:
             asset_columns = df.columns.tolist()
         
@@ -111,7 +159,7 @@ if uploaded_file is not None:
         selected_assets = st.multiselect(
             "🔍 Digite para buscar ou clique para selecionar:",
             options=asset_columns,
-            default=[],  # ALTERAÇÃO: Nenhum selecionado por padrão
+            default=[],
             help="Você pode digitar parte do nome para filtrar os ativos",
             placeholder="Escolha os ativos..."
         )
@@ -150,16 +198,29 @@ if uploaded_file is not None:
             ) / 100
         
         with col3:
-            risk_free_rate = st.number_input(
-                "🏛️ Taxa Livre de Risco (%)",
-                min_value=0.0,
-                max_value=100.0,
-                value=0.0,
-                step=0.1,
-                help="Taxa livre de risco ACUMULADA do período (ex: se CDI acumulou 12% no período, digite 12.0)"
-            ) / 100  # Converter para decimal
-                                
-        # Botão de otimização
+            # Inicializar otimizador para verificar taxa livre
+            temp_optimizer = PortfolioOptimizer(df, [])
+            
+            if has_risk_free and hasattr(temp_optimizer, 'risk_free_rate_total'):
+                # Mostrar taxa livre detectada como informação
+                detected_rate = temp_optimizer.risk_free_rate_total
+                st.metric(
+                    "🏛️ Taxa Livre de Risco",
+                    f"{detected_rate:.2%}",
+                    help="Taxa detectada automaticamente da coluna B (acumulada do período)"
+                )
+                used_risk_free_rate = detected_rate
+            else:
+                # Campo manual se não detectou
+                used_risk_free_rate = st.number_input(
+                    "🏛️ Taxa Livre de Risco (%)",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=0.0,
+                    step=0.1,
+                    help="Taxa livre de risco ACUMULADA do período"
+                ) / 100
+# Botão de otimização
         if st.button("🚀 OTIMIZAR PORTFÓLIO", type="primary", use_container_width=True):
             
             # Verificar novamente se há ativos suficientes
@@ -170,6 +231,12 @@ if uploaded_file is not None:
                     try:
                         # Inicializar otimizador com ativos selecionados
                         optimizer = PortfolioOptimizer(df, selected_assets)
+                        
+                        # Usar taxa livre detectada ou manual
+                        if has_risk_free and hasattr(optimizer, 'risk_free_rate_total'):
+                            final_risk_free_rate = optimizer.risk_free_rate_total
+                        else:
+                            final_risk_free_rate = used_risk_free_rate
                         
                         # Definir tipo de objetivo
                         if objective == "Maximizar Sharpe Ratio":
@@ -186,7 +253,7 @@ if uploaded_file is not None:
                             objective_type=obj_type,
                             target_return=None,
                             max_weight=max_weight,
-                            risk_free_rate=risk_free_rate  # Adicionar taxa livre de risco
+                            risk_free_rate=final_risk_free_rate
                         )
                         
                         if result['success']:
@@ -329,41 +396,65 @@ if uploaded_file is not None:
                                 else:
                                     st.warning("Nenhum ativo selecionado na otimização")
                             
-                            # Gráfico de evolução do portfólio
+                            # Gráfico de evolução do portfólio COM TAXA LIVRE
                             st.header("📈 Evolução do Portfólio Otimizado")
                             
                             # Criar DataFrame para o gráfico
-                            portfolio_evolution_df = pd.DataFrame({
-                                'Período': range(1, len(metrics['portfolio_cumulative']) + 1),
-                                'Retorno Acumulado (%)': metrics['portfolio_cumulative'] * 100
-                            })
+                            periods = range(1, len(metrics['portfolio_cumulative']) + 1)
                             
-                            # Criar gráfico de linha
-                            fig_line = px.line(
-                                portfolio_evolution_df,
-                                x='Período',
-                                y='Retorno Acumulado (%)',
-                                title='Evolução do Retorno Acumulado do Portfólio',
-                                labels={'Período': 'Dias de Negociação', 'Retorno Acumulado (%)': 'Retorno Acumulado (%)'}
-                            )
+                            # Criar figura com múltiplas linhas
+                            fig_line = go.Figure()
                             
-                            # Personalizar o gráfico
-                            fig_line.update_traces(
-                                line_color='#1f77b4',
-                                line_width=2.5
-                            )
+                            # Linha do portfólio
+                            fig_line.add_trace(go.Scatter(
+                                x=list(periods),
+                                y=metrics['portfolio_cumulative'] * 100,
+                                mode='lines',
+                                name='Portfólio Otimizado',
+                                line=dict(color='#1f77b4', width=2.5)
+                            ))
                             
+                            # Se temos taxa livre, adicionar linha
+                            if hasattr(optimizer, 'risk_free_cumulative') and optimizer.risk_free_cumulative is not None:
+                                fig_line.add_trace(go.Scatter(
+                                    x=list(periods),
+                                    y=optimizer.risk_free_cumulative * 100,
+                                    mode='lines',
+                                    name='Taxa Livre de Risco',
+                                    line=dict(color='#ff7f0e', width=2, dash='dash')
+                                ))
+                                
+                                # Adicionar linha de excesso de retorno
+                                excess_cumulative = metrics['portfolio_cumulative'] - optimizer.risk_free_cumulative.values
+                                fig_line.add_trace(go.Scatter(
+                                    x=list(periods),
+                                    y=excess_cumulative * 100,
+                                    mode='lines',
+                                    name='Excesso de Retorno',
+                                    line=dict(color='#2ca02c', width=2, dash='dot')
+                                ))
+                            
+                            # Personalizar layout
                             fig_line.update_layout(
+                                title='Evolução do Retorno Acumulado',
+                                xaxis_title='Dias de Negociação',
+                                yaxis_title='Retorno Acumulado (%)',
                                 hovermode='x unified',
-                                showlegend=False,
-                                height=400,
+                                height=500,
+                                showlegend=True,
+                                legend=dict(
+                                    yanchor="top",
+                                    y=0.99,
+                                    xanchor="left",
+                                    x=0.01
+                                ),
                                 xaxis=dict(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)'),
                                 yaxis=dict(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
                             )
                             
                             # Adicionar anotação com retorno final
                             fig_line.add_annotation(
-                                x=len(portfolio_evolution_df),
+                                x=len(periods),
                                 y=metrics['gv_final'] * 100,
                                 text=f"Retorno Final: {metrics['gv_final']:.2%}",
                                 showarrow=True,
@@ -387,11 +478,14 @@ if uploaded_file is not None:
                             
                             try:
                                 # Criar tabela de retornos mensais
-                                dates = getattr(optimizer, 'dates', None)  # Pegar datas se disponíveis
-                                monthly_table = create_monthly_returns_table(
+                                dates = getattr(optimizer, 'dates', None)
+                                risk_free_returns = getattr(optimizer, 'risk_free_returns', None)
+                                
+                                monthly_table, excess_table = create_monthly_returns_table(
                                     optimizer.returns_data, 
                                     result['weights'],
-                                    dates
+                                    dates,
+                                    risk_free_returns
                                 )
                                 
                                 # Função para aplicar cores baseadas no valor
@@ -418,7 +512,8 @@ if uploaded_file is not None:
                                     except:
                                         return 'color: black'
                                 
-                                # Formatar tabela para exibição
+                                # Mostrar tabela principal
+                                st.subheader("📊 Retornos Mensais do Portfólio")
                                 monthly_display = monthly_table.copy()
                                 
                                 # Aplicar formatação de porcentagem
@@ -437,8 +532,27 @@ if uploaded_file is not None:
                                     height=300
                                 )
                                 
-                                
-
+                                # Se temos tabela de excesso, mostrar também
+                                if excess_table is not None:
+                                    st.subheader("📊 Excesso de Retorno Mensal (Portfólio - Taxa Livre)")
+                                    
+                                    excess_display = excess_table.copy()
+                                    
+                                    # Aplicar formatação
+                                    for col in excess_display.columns:
+                                        excess_display[col] = excess_display[col].apply(
+                                            lambda x: f"{x:.2%}" if pd.notna(x) else "-"
+                                        )
+                                    
+                                    # Aplicar estilo
+                                    styled_excess = excess_display.style.applymap(color_negative_red)
+                                    
+                                    # Exibir
+                                    st.dataframe(
+                                        styled_excess,
+                                        use_container_width=True,
+                                        height=300
+                                    )
                                 
                             except Exception as e:
                                 st.warning(f"⚠️ Não foi possível gerar a tabela mensal: {str(e)}")
@@ -476,6 +590,7 @@ else:
     2. **Prepare sua planilha** com:
        - Primeira coluna: Datas
        - Outras colunas: Retornos de cada ativo (base 0)
+       - **NOVO**: Coluna B pode ser Taxa Livre de Risco (opcional)
     
     3. **Faça upload** do arquivo Excel
     
@@ -484,9 +599,12 @@ else:
     5. **Clique em otimizar** e receba os pesos ideais!
     
     ### 💡 Dica:
-    Caso vá criar seu próprio arquivo, os dados devem ser Inseridos na base 0. Isso significa que o primeiro valor (V1) = 0 e os subsequentes são: V2=(cota2-cota1)/cota1; V3=(cota3-cota2)/cota1; assim por diante
+    Use a mesma planilha que você já tem, só remova as colunas de fórmulas (GP, GQ, HC, etc.)
+    
+    ### 🆕 Nova Funcionalidade:
+    Se a coluna B tiver nome como "Taxa Livre", "CDI", "Selic", etc., o sistema detecta automaticamente!
     """)
 
 # Rodapé
 st.markdown("---")
-st.markdown("*Desenvolvido com Streamlit - Otimização Portifólio* 🚀")
+st.markdown("*Desenvolvido com Streamlit - Otimização Portfólio v2.0* 🚀")
