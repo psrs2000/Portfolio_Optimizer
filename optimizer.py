@@ -9,14 +9,25 @@ class PortfolioOptimizer:
         returns_data: DataFrame com retornos dos ativos (base 0)
         selected_assets: Lista de ativos selecionados (None = todos)
         """
+        self.original_data = returns_data.copy()  # Preservar dados originais com datas
+        
         # Assumir que primeira coluna é data, resto são ativos
         if isinstance(returns_data.columns[0], str) and 'data' in returns_data.columns[0].lower():
+            self.dates = pd.to_datetime(returns_data.iloc[:, 0])  # Guardar datas
             self.returns_data = returns_data.iloc[:, 1:]  # Remove coluna de data
         else:
             self.returns_data = returns_data
+            self.dates = None  # Sem coluna de datas
         
         # Converter para numérico e remover NaNs
         self.returns_data = self.returns_data.apply(pd.to_numeric, errors='coerce').dropna()
+        
+        # Se temos datas, precisamos sincronizá-las com os dados após dropna
+        if self.dates is not None:
+            # Pegar os índices que sobraram após dropna
+            valid_indices = self.returns_data.index
+            self.dates = self.dates.iloc[valid_indices].reset_index(drop=True)
+            self.returns_data = self.returns_data.reset_index(drop=True)
         
         # Se há ativos selecionados, filtrar apenas esses
         if selected_assets is not None:
@@ -28,9 +39,11 @@ class PortfolioOptimizer:
         
         print(f"Otimizador inicializado com {self.n_assets} ativos selecionados e {self.n_periods} períodos")
     
-    def calculate_portfolio_metrics(self, weights):
+    def calculate_portfolio_metrics(self, weights, risk_free_rate=0.0):
         """
         Calcula métricas do portfólio (EXATAMENTE como na planilha)
+        weights: pesos do portfólio
+        risk_free_rate: taxa livre de risco ACUMULADA do período (ex: 0.12 para 12%)
         """
         # Garante que weights é array numpy
         weights = np.array(weights)
@@ -47,8 +60,10 @@ class PortfolioOptimizer:
         # GV_final: Último valor da coluna GV (retorno acumulado total)
         gv_final = portfolio_cumulative[-1]
         
-        # HC8: Sharpe ratio (GV_final / HC5, assumindo risk-free = 0)
-        sharpe_ratio = gv_final / portfolio_vol if portfolio_vol > 0 else 0
+        # HC8: Sharpe ratio CORRIGIDO com taxa livre de risco
+        # Fórmula: (Retorno Total - Taxa Livre de Risco) / Volatilidade
+        excess_return = gv_final - risk_free_rate
+        sharpe_ratio = excess_return / portfolio_vol if portfolio_vol > 0 else 0
         
         # Retorno anualizado (para comparação)
         annual_return = (1 + gv_final) ** (252 / self.n_periods) - 1
@@ -93,6 +108,8 @@ class PortfolioOptimizer:
             'annual_return': annual_return,
             'volatility': portfolio_vol,
             'sharpe_ratio': sharpe_ratio,
+            'excess_return': excess_return,  # Novo: retorno em excesso
+            'risk_free_rate': risk_free_rate,  # Novo: taxa livre de risco usada
             'hc10': hc10,
             'portfolio_returns_daily': portfolio_returns_daily,
             'portfolio_cumulative': portfolio_cumulative,
@@ -104,13 +121,14 @@ class PortfolioOptimizer:
             'var_99_annual': var_99_annual
         }
     
-    def optimize_portfolio(self, objective_type='sharpe', target_return=None, max_weight=1.0):
+    def optimize_portfolio(self, objective_type='sharpe', target_return=None, max_weight=1.0, risk_free_rate=0.0):
         """
         Otimiza o portfólio (substitui o Solver do Excel)
+        risk_free_rate: taxa livre de risco acumulada do período
         """
         
         def objective_function(weights):
-            metrics = self.calculate_portfolio_metrics(weights)
+            metrics = self.calculate_portfolio_metrics(weights, risk_free_rate)
             
             if objective_type == 'sharpe':
                 # Maximizar Sharpe (minimizar -Sharpe)
@@ -118,8 +136,11 @@ class PortfolioOptimizer:
             elif objective_type == 'volatility':
                 # Minimizar volatilidade
                 return metrics['volatility']
+            elif objective_type == 'slope':
+                # Maximizar Inclinação (minimizar -Inclinação)
+                return -metrics['slope']
             elif objective_type == 'hc10':
-                # Maximizar HC10 (minimizar -HC10)
+                # Maximizar Inclinação/(1-R²) (minimizar -HC10)
                 return -metrics['hc10']
             elif objective_type == 'return':
                 # Maximizar retorno (minimizar -retorno)
@@ -130,8 +151,6 @@ class PortfolioOptimizer:
             # Soma dos pesos = 1 (100%)
             {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
         ]
-        
-        # Remover restrição de target_return (não usamos mais)
         
         # Limites para cada peso (0% a max_weight%)
         bounds = tuple((0, max_weight) for _ in range(self.n_assets))
@@ -152,7 +171,7 @@ class PortfolioOptimizer:
             
             if result.success:
                 optimal_weights = result.x
-                metrics = self.calculate_portfolio_metrics(optimal_weights)
+                metrics = self.calculate_portfolio_metrics(optimal_weights, risk_free_rate)
                 
                 return {
                     'success': True,
