@@ -142,9 +142,15 @@ class PortfolioOptimizer:
             elif objective_type == 'hc10':
                 # Maximizar Inclinação/(1-R²)×Vol 
                 # Mas para estabilidade, minimizamos o inverso: (1-R²)×Vol/Inclinação
-                if metrics['slope'] != 0 and metrics['volatility'] > 0 and metrics['r_squared'] < 1:
-                    # Retornar o inverso para minimizar
-                    return (1 - metrics['r_squared']) * metrics['volatility'] / abs(metrics['slope'])
+                if metrics['volatility'] > 0 and metrics['r_squared'] < 1:
+                    if metrics['slope'] > 0.000001:  # Inclinação positiva pequena
+                        # Retornar o inverso para minimizar
+                        return (1 - metrics['r_squared']) * metrics['volatility'] / metrics['slope']
+                    elif metrics['slope'] < -0.000001:  # Inclinação negativa
+                        # Penalizar fortemente inclinações negativas
+                        return 1e10 - metrics['slope']  # Quanto mais negativo, pior
+                    else:  # Inclinação muito próxima de zero
+                        return 1e10
                 else:
                     # Valor alto para penalizar casos inválidos
                     return 1e10
