@@ -641,8 +641,7 @@ else:
     2. **No caso de usar sua própria** estruture assim:
        - Primeira coluna: Datas
        - Outras colunas: Retornos de cada ativo (base 0)
-       - **NOVO**: Coluna B pode ser Taxa Livre de Risco (opcional)
-    
+       - **Atenção**: Coluna B deve ser a coluna de referência. Ideal que seja a "Taxa Livre de Risco"    
     3. **Faça upload** do arquivo Excel no link ao lado
     
     4. **Configure** os parâmetros de otimização
