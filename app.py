@@ -14,7 +14,7 @@ st.set_page_config(
 
 # Título
 st.title("📊 Otimizador de Portfólio")
-st.markdown("*Baseado na metodologia da sua planilha Excel*")
+st.markdown("*Baseado na metodologia de Markowitz*")
 
 # Sidebar para upload
 with st.sidebar:
@@ -650,10 +650,10 @@ else:
     5. **Clique em otimizar** e receba os pesos ideais!
     
     ### 💡 Dica:
-    Use a mesma planilha que você já tem, só remova as colunas de fórmulas (GP, GQ, HC, etc.)
-    
+    Se a coluna B tiver no nome "Taxa Livre", "CDI", "Selic", o sistema detecta automaticamente
+ e já calcula a Taxa livre de risco do período.    
     ### 🆕 Nova Funcionalidade:
-    Se a coluna B tiver nome como "Taxa Livre", "CDI", "Selic", etc., o sistema detecta automaticamente!
+    Otimização da diferença entre "Retorno Total" e "Taxa livre de risco"
     """)
 
 # Rodapé
