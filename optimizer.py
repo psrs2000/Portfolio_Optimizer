@@ -140,8 +140,14 @@ class PortfolioOptimizer:
                 # Maximizar Inclinação (minimizar -Inclinação)
                 return -metrics['slope']
             elif objective_type == 'hc10':
-                # Maximizar Inclinação/(1-R²) (minimizar -HC10)
-                return -metrics['hc10']
+                # Maximizar Inclinação/(1-R²)×Vol 
+                # Mas para estabilidade, minimizamos o inverso: (1-R²)×Vol/Inclinação
+                if metrics['slope'] != 0 and metrics['volatility'] > 0 and metrics['r_squared'] < 1:
+                    # Retornar o inverso para minimizar
+                    return (1 - metrics['r_squared']) * metrics['volatility'] / abs(metrics['slope'])
+                else:
+                    # Valor alto para penalizar casos inválidos
+                    return 1e10
             elif objective_type == 'return':
                 # Maximizar retorno (minimizar -retorno)
                 return -metrics['annual_return']
@@ -160,7 +166,6 @@ class PortfolioOptimizer:
         
         # Otimização (aqui é onde a mágica acontece!)
         try:
-            # Tentar primeiro com SLSQP
             result = minimize(
                 objective_function,
                 initial_weights,
@@ -170,15 +175,27 @@ class PortfolioOptimizer:
                 options={'maxiter': 1000, 'ftol': 1e-9}
             )
             
-            # Se falhar, tentar com outro método
-            if not result.success:
-                print(f"SLSQP falhou: {result.message}. Tentando método alternativo...")
+            if result.success:
+                optimal_weights = result.x
+                metrics = self.calculate_portfolio_metrics(optimal_weights, risk_free_rate)
                 
-                # Método 2: Trust-constr (mais robusto)
-                result = minimize(
-                    objective_function,
-                    initial_weights,
-                    method='trust-constr',
+                return {
+                    'success': True,
+                    'weights': optimal_weights,
+                    'metrics': metrics,
+                    'assets': self.assets
+                }
+            else:
+                return {
+                    'success': False,
+                    'message': f"Otimização falhou: {result.message}"
+                }
+                
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f"Erro na otimização: {str(e)}"
+            }d='trust-constr',
                     bounds=bounds,
                     constraints=constraints,
                     options={'maxiter': 3000}
