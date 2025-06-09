@@ -14,10 +14,30 @@ class PortfolioOptimizer:
         # Assumir que primeira coluna é data, resto são ativos
         if isinstance(returns_data.columns[0], str) and 'data' in returns_data.columns[0].lower():
             self.dates = pd.to_datetime(returns_data.iloc[:, 0])  # Guardar datas
-            self.returns_data = returns_data.iloc[:, 1:]  # Remove coluna de data
+            
+            # Verificar se segunda coluna é Taxa Livre de Risco
+            if len(returns_data.columns) > 2 and isinstance(returns_data.columns[1], str) and any(
+                term in returns_data.columns[1].lower() for term in ['taxa', 'livre', 'risco', 'risk', 'free', 'cdi', 'selic']
+            ):
+                self.risk_free_returns = returns_data.iloc[:, 1].apply(pd.to_numeric, errors='coerce')  # Coluna B
+                self.returns_data = returns_data.iloc[:, 2:]  # Ativos começam na coluna C
+                # Calcular taxa livre de risco acumulada
+                self.risk_free_cumulative = np.cumsum(self.risk_free_returns.dropna())
+                if len(self.risk_free_cumulative) > 0:
+                    self.risk_free_rate_total = self.risk_free_cumulative.iloc[-1]
+                else:
+                    self.risk_free_rate_total = 0.0
+            else:
+                self.risk_free_returns = None
+                self.risk_free_cumulative = None
+                self.risk_free_rate_total = 0.0
+                self.returns_data = returns_data.iloc[:, 1:]  # Remove coluna de data
         else:
             self.returns_data = returns_data
-            self.dates = None  # Sem coluna de datas
+            self.dates = None
+            self.risk_free_returns = None
+            self.risk_free_cumulative = None
+            self.risk_free_rate_total = 0.0
         
         # Converter para numérico e remover NaNs
         self.returns_data = self.returns_data.apply(pd.to_numeric, errors='coerce').dropna()
@@ -28,6 +48,13 @@ class PortfolioOptimizer:
             valid_indices = self.returns_data.index
             self.dates = self.dates.iloc[valid_indices].reset_index(drop=True)
             self.returns_data = self.returns_data.reset_index(drop=True)
+            
+            # Sincronizar risk_free_returns também se existir
+            if self.risk_free_returns is not None:
+                self.risk_free_returns = self.risk_free_returns.iloc[valid_indices].reset_index(drop=True)
+                # Recalcular acumulado com dados sincronizados
+                self.risk_free_cumulative = np.cumsum(self.risk_free_returns)
+                self.risk_free_rate_total = self.risk_free_cumulative.iloc[-1] if len(self.risk_free_cumulative) > 0 else 0.0
         
         # Se há ativos selecionados, filtrar apenas esses
         if selected_assets is not None:
@@ -38,6 +65,8 @@ class PortfolioOptimizer:
         self.n_periods = len(self.returns_data)
         
         print(f"Otimizador inicializado com {self.n_assets} ativos selecionados e {self.n_periods} períodos")
+        if self.risk_free_rate_total > 0:
+            print(f"Taxa livre de risco detectada: {self.risk_free_rate_total:.2%}")
     
     def calculate_portfolio_metrics(self, weights, risk_free_rate=0.0):
         """
