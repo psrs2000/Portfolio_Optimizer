@@ -195,66 +195,6 @@ class PortfolioOptimizer:
             return {
                 'success': False,
                 'message': f"Erro na otimização: {str(e)}"
-            }d='trust-constr',
-                    bounds=bounds,
-                    constraints=constraints,
-                    options={'maxiter': 3000}
-                )
-                
-                # Se ainda falhar, tentar com pesos aleatórios
-                if not result.success:
-                    print("Trust-constr falhou. Tentando com pesos iniciais aleatórios...")
-                    
-                    # Gerar pesos aleatórios válidos
-                    random_weights = np.random.dirichlet(np.ones(self.n_assets))
-                    
-                    # Ajustar para respeitar max_weight
-                    while np.any(random_weights > max_weight):
-                        random_weights = np.random.dirichlet(np.ones(self.n_assets) * 2)
-                    
-                    result = minimize(
-                        objective_function,
-                        random_weights,
-                        method='SLSQP',
-                        bounds=bounds,
-                        constraints=constraints,
-                        options={'maxiter': 2000, 'ftol': 1e-8}
-                    )
-            
-            if result.success:
-                optimal_weights = result.x
-                
-                # Garantir que a soma seja exatamente 1.0
-                optimal_weights = optimal_weights / optimal_weights.sum()
-                
-                metrics = self.calculate_portfolio_metrics(optimal_weights, risk_free_rate)
-                
-                return {
-                    'success': True,
-                    'weights': optimal_weights,
-                    'metrics': metrics,
-                    'assets': self.assets
-                }
-            else:
-                # Última tentativa: solução simples com pesos iguais respeitando max_weight
-                n_assets_needed = min(self.n_assets, int(1.0 / max_weight))
-                simple_weights = np.zeros(self.n_assets)
-                simple_weights[:n_assets_needed] = 1.0 / n_assets_needed
-                
-                metrics = self.calculate_portfolio_metrics(simple_weights, risk_free_rate)
-                
-                return {
-                    'success': True,
-                    'weights': simple_weights,
-                    'metrics': metrics,
-                    'assets': self.assets,
-                    'message': 'Otimização complexa falhou. Usando distribuição simplificada.'
-                }
-                
-        except Exception as e:
-            return {
-                'success': False,
-                'message': f"Erro na otimização: {str(e)}"
             }
     
     def get_portfolio_summary(self, weights):
