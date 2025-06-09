@@ -135,11 +135,13 @@ if uploaded_file is not None:
         
         # Verificar se há taxa livre de risco na coluna B
         has_risk_free = False
+        risk_free_column_name = None
         if len(df.columns) > 2 and isinstance(df.columns[1], str):
             col_name = df.columns[1].lower()
             if any(term in col_name for term in ['taxa', 'livre', 'risco', 'risk', 'free', 'cdi', 'selic']):
                 has_risk_free = True
-                st.info(f"📊 Taxa livre de risco detectada: '{df.columns[1]}'")
+                risk_free_column_name = df.columns[1]
+                st.info(f"📊 Taxa livre de risco detectada: '{risk_free_column_name}'")
         
         # Seleção de ativos
         st.header("🎯 Seleção de Ativos")
@@ -181,10 +183,22 @@ if uploaded_file is not None:
         col1, col2, col3 = st.columns(3)
         
         with col1:
+            # Lista de objetivos com condicional
+            objectives_list = [
+                "Maximizar Sharpe Ratio", 
+                "Minimizar Risco", 
+                "Maximizar Inclinação", 
+                "Maximizar Inclinação/[(1-R²)×Vol]"
+            ]
+            
+            # Adicionar objetivo de excesso apenas se taxa livre foi detectada
+            if has_risk_free:
+                objectives_list.append("🆕 Maximizar Linearidade do Excesso")
+                
             objective = st.selectbox(
                 "🎯 Objetivo da Otimização",
-                ["Maximizar Sharpe Ratio", "Minimizar Risco", "Maximizar Inclinação", "Maximizar Inclinação/[(1-R²)×Vol]"],
-                help="Escolha o que você quer otimizar"
+                objectives_list,
+                help="Escolha o que você quer otimizar. NOVO: Linearidade do Excesso disponível quando taxa livre é detectada!"
             )
         
         with col2:
@@ -247,6 +261,8 @@ if uploaded_file is not None:
                             obj_type = 'slope'
                         elif objective == "Maximizar Inclinação/[(1-R²)×Vol]":
                             obj_type = 'hc10'
+                        elif objective == "🆕 Maximizar Linearidade do Excesso":
+                            obj_type = 'excess_hc10'
                         
                         # Executar otimização
                         result = optimizer.optimize_portfolio(
@@ -345,6 +361,41 @@ if uploaded_file is not None:
                                     f"{metrics['excess_return']:.2%}",
                                     help="Retorno Total - Taxa Livre de Risco (numerador do Sharpe Ratio)"
                                 )
+                            
+                            # NOVO: Se otimizou excesso, mostrar métricas específicas
+                            if objective == "🆕 Maximizar Linearidade do Excesso" and metrics.get('excess_r_squared') is not None:
+                                st.subheader("🆕 Métricas de Linearidade do Excesso")
+                                col1, col2, col3, col4 = st.columns(4)
+                                
+                                with col1:
+                                    st.metric(
+                                        "📈 Inclinação Excesso (×1000)", 
+                                        f"{metrics['excess_slope']*1000:.3f}",
+                                        help="Inclinação da regressão linear do EXCESSO de retorno"
+                                    )
+                                
+                                with col2:
+                                    st.metric(
+                                        "📊 R² do Excesso", 
+                                        f"{metrics['excess_r_squared']:.3f}",
+                                        help="Qualidade da linearidade do excesso (quanto mais próximo de 1, mais linear)"
+                                    )
+                                
+                                with col3:
+                                    st.metric(
+                                        "🎯 HC10 do Excesso", 
+                                        f"{metrics['excess_hc10']:.4f}",
+                                        help="Métrica de linearidade do excesso: Inclinação / [(1-R²)×Vol]"
+                                    )
+                                
+                                with col4:
+                                    delta = metrics['excess_r_squared'] - metrics['r_squared']
+                                    st.metric(
+                                        "📊 Melhoria na Linearidade", 
+                                        f"{delta*100:.1f}%",
+                                        delta=f"{delta:.3f}",
+                                        help="Diferença entre R² do excesso e R² total"
+                                    )
                             
                             # Explicação sobre VaR e Taxa Livre de Risco
                             st.info(
