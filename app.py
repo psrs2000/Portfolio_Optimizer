@@ -801,4 +801,5 @@ else:
 
 # Rodapé
 st.markdown("---")
-st.markdown("*Desenvolvido com Streamlit - Otimização Portfólio v3.0* 🚀")                                    "
+st.markdown("*Desenvolvido com Streamlit - Otimização Portfólio v3.0* 🚀")
+                                    "
