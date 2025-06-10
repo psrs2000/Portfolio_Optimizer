@@ -365,7 +365,7 @@ if uploaded_file is not None:
                             # NOVO: Se otimizou excesso, mostrar métricas específicas
                             if objective == "🆕 Maximizar Linearidade do Excesso" and metrics.get('excess_r_squared') is not None:
                                 st.subheader("🆕 Métricas de Linearidade do Excesso")
-                                col1, col2, col3, col4 = st.columns(4)
+                                col1, col2, col3 = st.columns(3)
                                 
                                 with col1:
                                     st.metric(
@@ -382,31 +382,17 @@ if uploaded_file is not None:
                                     )
                                 
                                 with col3:
-                                    # Calcular HC10 modificado do excesso
-                                    excess_total = metrics['gv_final'] - metrics['risk_free_rate']
-                                    if excess_total > 0 and metrics.get('excess_r_squared', 0) < 1:
-                                        # Calcular volatilidade do excesso
-                                        excess_vol_calc = metrics.get('excess_hc10', 0)
-                                        if excess_vol_calc == 0:  # Fallback se não calculou
-                                            excess_hc10_display = excess_total / 0.01  # Valor alto
-                                        else:
-                                            excess_hc10_display = metrics['excess_hc10']
+                                    # Calcular volatilidade do excesso
+                                    if hasattr(optimizer, 'risk_free_returns') and optimizer.risk_free_returns is not None:
+                                        excess_returns_daily = metrics['portfolio_returns_daily'] - optimizer.risk_free_returns.values
+                                        excess_vol = np.std(excess_returns_daily, ddof=0) * np.sqrt(252)
                                     else:
-                                        excess_hc10_display = 0
+                                        excess_vol = 0
                                     
                                     st.metric(
-                                        "🎯 Retorno/[Vol×(1-R²)] Excesso", 
-                                        f"{excess_hc10_display:.4f}",
-                                        help="Métrica de eficiência do excesso: Retorno_Excesso / [Vol_Excesso × (1-R²_Excesso)]"
-                                    )
-                                
-                                with col4:
-                                    delta = metrics['excess_r_squared'] - metrics['r_squared']
-                                    st.metric(
-                                        "📊 Melhoria na Linearidade", 
-                                        f"{delta*100:.1f}%",
-                                        delta=f"{delta:.3f}",
-                                        help="Diferença entre R² do excesso e R² total"
+                                        "📊 Volatilidade do Excesso", 
+                                        f"{excess_vol:.2%}",
+                                        help="Volatilidade anualizada do excesso de retorno (desvio padrão do excesso × √252)"
                                     )
                             
                             # Explicação sobre VaR e Taxa Livre de Risco
