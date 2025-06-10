@@ -4,8 +4,6 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from optimizer import PortfolioOptimizer
-import gdown
-from pathlib import Path
 
 # Configuração da página
 st.set_page_config(
@@ -18,79 +16,14 @@ st.set_page_config(
 st.title("📊 Otimizador de Portfólio")
 st.markdown("*Baseado na metodologia de Markowitz*")
 
-# Classe para carregar arquivos do Google Drive
-class GoogleDriveLoader:
-    """
-    Classe para carregar arquivos diretamente do Google Drive
-    """
-    
-    # Lista de arquivos conhecidos (atualize com os IDs reais dos seus arquivos)
-    KNOWN_FILES = {
-        "Ações Brasileiras (2020-2024)": {
-            "id": "SEU_FILE_ID_AQUI_1",
-            "description": "Dados históricos de ações do Ibovespa"
-        },
-        "Fundos Imobiliários (FIIs)": {
-            "id": "SEU_FILE_ID_AQUI_2",
-            "description": "Dados de FIIs brasileiros"
-        },
-        "Criptomoedas Principais": {
-            "id": "SEU_FILE_ID_AQUI_3",
-            "description": "Bitcoin, Ethereum e principais criptos"
-        },
-        "Portfólio com Taxa Livre (CDI)": {
-            "id": "SEU_FILE_ID_AQUI_4",
-            "description": "Exemplo com CDI na coluna B"
-        },
-        "ETFs Internacionais": {
-            "id": "SEU_FILE_ID_AQUI_5",
-            "description": "ETFs de mercados globais"
-        }
-    }
-    
-    @staticmethod
-    def load_from_gdrive_id(file_id):
-        """
-        Carrega arquivo do Google Drive usando ID
-        """
-        try:
-            # Primeiro tenta carregar direto com pandas
-            url = f"https://drive.google.com/uc?id={file_id}"
-            df = pd.read_excel(url)
-            return df
-        except:
-            # Se falhar, baixa o arquivo primeiro
-            try:
-                temp_file = "temp_portfolio_data.xlsx"
-                gdown.download(url, temp_file, quiet=True)
-                df = pd.read_excel(temp_file)
-                # Remove arquivo temporário
-                Path(temp_file).unlink(missing_ok=True)
-                return df
-            except Exception as e:
-                st.error(f"Erro ao carregar arquivo: {str(e)}")
-                return None
-    
-    @staticmethod
-    def load_from_url(url):
-        """
-        Carrega arquivo a partir de URL do Google Drive
-        """
-        try:
-            # Extrai ID do arquivo da URL
-            if "/file/d/" in url:
-                file_id = url.split("/file/d/")[1].split("/")[0]
-            elif "id=" in url:
-                file_id = url.split("id=")[1].split("&")[0]
-            else:
-                st.error("URL do Google Drive inválido")
-                return None
-            
-            return GoogleDriveLoader.load_from_gdrive_id(file_id)
-            
-        except Exception as e:
-            st.error(f"Erro ao processar URL: {str(e)}")
-            return None
+# Sidebar para upload
+with st.sidebar:
+    st.header("📁 Upload dos Dados")
+    uploaded_file = st.file_uploader(
+        "Escolha sua planilha Excel",
+        type=['xlsx', 'xls'],
+        help="Planilha com dados históricos dos ativos"
+    )
 
 def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_returns=None):
     """
@@ -187,94 +120,13 @@ def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_re
     
     return pivot_table, comparison_table
 
-# Interface principal - Sistema de carregamento de dados
-st.sidebar.header("📁 Carregar Dados")
-
-# Opções de carregamento
-load_option = st.sidebar.radio(
-    "Como deseja carregar os dados?",
-    ["📂 Arquivos Disponíveis", "📤 Upload Local", "🔗 URL do Google Drive"],
-    help="Escolha como carregar seus dados"
-)
-
-df = None
-data_loaded = False
-
-if load_option == "📂 Arquivos Disponíveis":
-    st.sidebar.markdown("### Conjuntos de Dados Prontos")
-    
-    # Lista de arquivos disponíveis
-    selected_dataset = st.sidebar.selectbox(
-        "Escolha um conjunto de dados:",
-        options=list(GoogleDriveLoader.KNOWN_FILES.keys()),
-        format_func=lambda x: f"{x}"
-    )
-    
-    if selected_dataset:
-        file_info = GoogleDriveLoader.KNOWN_FILES[selected_dataset]
-        st.sidebar.info(f"📄 {file_info['description']}")
-        
-        if st.sidebar.button("📥 Carregar Dados", type="primary", use_container_width=True):
-            with st.spinner(f"Carregando {selected_dataset}..."):
-                # Aqui você precisa adicionar os IDs reais dos arquivos
-                # Por enquanto, vou mostrar uma mensagem
-                st.sidebar.warning(
-                    "⚠️ Para funcionar, você precisa:\n"
-                    "1. Obter os IDs dos arquivos no Google Drive\n"
-                    "2. Atualizar o dicionário KNOWN_FILES com os IDs reais"
-                )
-                st.sidebar.markdown(
-                    "**Como obter o ID do arquivo:**\n"
-                    "1. Abra o arquivo no Google Drive\n"
-                    "2. O ID está na URL: drive.google.com/file/d/**ID_AQUI**/view"
-                )
-
-elif load_option == "📤 Upload Local":
-    uploaded_file = st.sidebar.file_uploader(
-        "Escolha sua planilha Excel",
-        type=['xlsx', 'xls'],
-        help="Planilha com dados históricos dos ativos"
-    )
-    
-    if uploaded_file is not None:
-        try:
-            df = pd.read_excel(uploaded_file)
-            data_loaded = True
-            st.sidebar.success("✅ Arquivo carregado!")
-        except Exception as e:
-            st.sidebar.error(f"❌ Erro: {str(e)}")
-
-elif load_option == "🔗 URL do Google Drive":
-    st.sidebar.markdown("### Carregar de URL")
-    
-    url_input = st.sidebar.text_input(
-        "Cole o link do Google Drive:",
-        placeholder="https://drive.google.com/file/d/.../view",
-        help="Link de compartilhamento do arquivo"
-    )
-    
-    example_url = "https://drive.google.com/file/d/1ABC123/view?usp=sharing"
-    st.sidebar.caption(f"Exemplo: {example_url}")
-    
-    if st.sidebar.button("🔗 Carregar do URL", type="secondary"):
-        if url_input:
-            with st.spinner("Carregando arquivo..."):
-                df = GoogleDriveLoader.load_from_url(url_input)
-                if df is not None:
-                    data_loaded = True
-                    st.sidebar.success("✅ Arquivo carregado!")
-
-# Link para pasta do Google Drive
-st.sidebar.markdown("---")
-st.sidebar.markdown(
-    "📂 [Ver pasta com todos os arquivos]"
-    "(https://drive.google.com/drive/folders/1t8EcZZqGqPIH3pzZ-DdBytrr3Rb1TuwV?usp=sharing)"
-)
-
 # Área principal
-if df is not None:
+if uploaded_file is not None:
     try:
-        st.success("✅ Dados carregados com sucesso!")
+        # Ler o arquivo
+        df = pd.read_excel(uploaded_file)
+        
+        st.success("✅ Arquivo carregado com sucesso!")
         
         # Mostrar preview dos dados
         with st.expander("📋 Ver dados carregados"):
@@ -382,8 +234,7 @@ if df is not None:
                     step=0.1,
                     help="Taxa livre de risco ACUMULADA do período"
                 ) / 100
-
-        # Botão de otimização
+# Botão de otimização
         if st.button("🚀 OTIMIZAR PORTFÓLIO", type="primary", use_container_width=True):
             
             # Verificar novamente se há ativos suficientes
@@ -765,41 +616,44 @@ if df is not None:
                         st.info("💡 Verifique se os dados estão no formato correto (primeira coluna = datas, demais = retornos)")
 
     except Exception as e:
-        st.error(f"❌ Erro ao processar dados: {e}")
+        st.error(f"❌ Erro ao ler arquivo: {e}")
 
 else:
     # Mensagem quando não há arquivo
-    st.info("👈 Escolha uma opção de carregamento de dados na barra lateral")
+    st.info("👈 Faça upload de uma planilha Excel para começar")
     
-    # Instruções atualizadas
+    # Link para download dos dados
+    st.markdown("### 📂 Dados Disponíveis")
+    st.markdown(
+        "**Baixe planilhas com dados históricos de ativos caso não tenha uma:**\n\n"
+        "🔗 [Acessar pasta no Google Drive](https://drive.google.com/drive/folders/1t8EcZZqGqPIH3pzZ-DdBytrr3Rb1TuwV?usp=sharing)"
+    )
+    st.markdown("---")
+    
+    # Instruções
     st.markdown("""
-    ### 🚀 Como usar o novo sistema:
+    ### 📝 Como usar:
     
-    #### 📂 **Opção 1: Arquivos Disponíveis** (NOVO!)
-    - Selecione um conjunto de dados pré-carregado
-    - Clique em "Carregar Dados"
-    - **Nota**: Você precisa atualizar os IDs dos arquivos no código
+    1. **Baixe uma planilha** do link acima ou use sua própria
     
-    #### 📤 **Opção 2: Upload Local**
-    - Faça upload de sua própria planilha Excel
-    - Formato: primeira coluna = datas, outras = retornos
+    2. **Caso opte em usasr sua própria planilha** estruture assim:
+       - Primeira coluna: Datas
+       - Outras colunas: Retornos de cada ativo (base 0)
+       - **Atenção**: Coluna B é a coluna de referência - Taxa Livre de Risco.
     
-    #### 🔗 **Opção 3: URL do Google Drive** (NOVO!)
-    - Cole o link de compartilhamento de qualquer arquivo Excel do Google Drive
-    - O sistema carregará automaticamente
+    3. **Faça upload** do arquivo Excel
     
-    ### 📝 Estrutura dos dados:
-    - **Coluna A**: Datas
-    - **Coluna B** (opcional): Taxa Livre de Risco (CDI, Selic, etc.)
-    - **Demais colunas**: Retornos de cada ativo (base 0)
+    4. **Configure** os parâmetros de otimização
     
-    ### 💡 Dicas:
-    - Se a coluna B tiver "Taxa Livre", "CDI", ou "Selic" no nome, o sistema detecta automaticamente!
-    - Para obter o ID de um arquivo do Google Drive, abra o arquivo e copie o ID da URL
-    - Exemplo de URL: `drive.google.com/file/d/ID_AQUI/view`
+    5. **Clique em otimizar** e receba os pesos ideais!
+    
+    ### 💡 Dica:
+    Se a coluna B tiver no nome "Taxa Livre", "CDI", ou "Selic", o sistema detecta e já calcula  a taxa livre de risco do período!
+    
+    ### 🆕 Nova Funcionalidade:
+    Otimização da diferença (Retorno Total - Taxa livre de risco)!
     """)
 
 # Rodapé
 st.markdown("---")
-st.markdown("*Desenvolvido com Streamlit - Otimização Portfólio v3.0* 🚀")
-                                    "
+st.markdown("*Desenvolvido com Streamlit - Otimização Portfólio v2.0* 🚀")
