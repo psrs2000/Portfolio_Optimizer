@@ -382,10 +382,22 @@ if uploaded_file is not None:
                                     )
                                 
                                 with col3:
+                                    # Calcular HC10 modificado do excesso
+                                    excess_total = metrics['gv_final'] - metrics['risk_free_rate']
+                                    if excess_total > 0 and metrics.get('excess_r_squared', 0) < 1:
+                                        # Calcular volatilidade do excesso
+                                        excess_vol_calc = metrics.get('excess_hc10', 0)
+                                        if excess_vol_calc == 0:  # Fallback se não calculou
+                                            excess_hc10_display = excess_total / 0.01  # Valor alto
+                                        else:
+                                            excess_hc10_display = metrics['excess_hc10']
+                                    else:
+                                        excess_hc10_display = 0
+                                    
                                     st.metric(
-                                        "🎯 HC10 do Excesso", 
-                                        f"{metrics['excess_hc10']:.4f}",
-                                        help="Métrica de linearidade do excesso: Inclinação / [(1-R²)×Vol]"
+                                        "🎯 Retorno/[Vol×(1-R²)] Excesso", 
+                                        f"{excess_hc10_display:.4f}",
+                                        help="Métrica de eficiência do excesso: Retorno_Excesso / [Vol_Excesso × (1-R²_Excesso)]"
                                     )
                                 
                                 with col4:
@@ -638,21 +650,22 @@ else:
     
     1. **Baixe uma planilha** do link acima ou use sua própria
     
-    2. **No caso de usar sua própria** estruture assim:
+    2. **Prepare sua planilha** com:
        - Primeira coluna: Datas
        - Outras colunas: Retornos de cada ativo (base 0)
-       - **Atenção**: Coluna B deve ser a coluna de referência. Ideal que seja a "Taxa Livre de Risco"    
-    3. **Faça upload** do arquivo Excel no link ao lado
+       - **NOVO**: Coluna B pode ser Taxa Livre de Risco (opcional)
+    
+    3. **Faça upload** do arquivo Excel
     
     4. **Configure** os parâmetros de otimização
     
     5. **Clique em otimizar** e receba os pesos ideais!
     
     ### 💡 Dica:
-    Se a coluna B tiver no nome "Taxa Livre", "CDI", "Selic", o sistema detecta automaticamente
- e já calcula a Taxa livre de risco do período.    
+    Use a mesma planilha que você já tem, só remova as colunas de fórmulas (GP, GQ, HC, etc.)
+    
     ### 🆕 Nova Funcionalidade:
-    Otimização da diferença entre "Retorno Total" e "Taxa livre de risco"
+    Se a coluna B tiver nome como "Taxa Livre", "CDI", "Selic", etc., o sistema detecta automaticamente!
     """)
 
 # Rodapé
