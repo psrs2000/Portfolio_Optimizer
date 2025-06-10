@@ -620,7 +620,7 @@ if uploaded_file is not None:
 
 else:
     # Mensagem quando não há arquivo
-    st.info("👆 Faça upload de uma planilha Excel para começar")
+    st.info("👈 Faça upload de uma planilha Excel para começar")
     
     # Link para download dos dados
     st.markdown("### 📂 Dados Disponíveis")
