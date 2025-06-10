@@ -648,10 +648,10 @@ else:
     5. **Clique em otimizar** e receba os pesos ideais!
     
     ### 💡 Dica:
-    Use a mesma planilha que você já tem, só remova as colunas de fórmulas (GP, GQ, HC, etc.)
+    Se a coluna B tiver no nome "Taxa Livre", "CDI", "Selic", etc., o sistema detecta e já calcula  a taxa livre de risco do período!
     
     ### 🆕 Nova Funcionalidade:
-    Se a coluna B tiver nome como "Taxa Livre", "CDI", "Selic", etc., o sistema detecta automaticamente!
+    Otimização da diferença (Retorno Total - Taxa livre de risco)!
     """)
 
 # Rodapé
