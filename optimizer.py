@@ -14,10 +14,30 @@ class PortfolioOptimizer:
         # Assumir que primeira coluna é data, resto são ativos
         if isinstance(returns_data.columns[0], str) and 'data' in returns_data.columns[0].lower():
             self.dates = pd.to_datetime(returns_data.iloc[:, 0])  # Guardar datas
-            self.returns_data = returns_data.iloc[:, 1:]  # Remove coluna de data
+            
+            # Verificar se segunda coluna é Taxa Livre de Risco
+            if len(returns_data.columns) > 2 and isinstance(returns_data.columns[1], str) and any(
+                term in returns_data.columns[1].lower() for term in ['taxa', 'livre', 'risco', 'risk', 'free', 'cdi', 'selic']
+            ):
+                self.risk_free_returns = returns_data.iloc[:, 1].apply(pd.to_numeric, errors='coerce')  # Coluna B
+                self.returns_data = returns_data.iloc[:, 2:]  # Ativos começam na coluna C
+                # Calcular taxa livre de risco acumulada
+                self.risk_free_cumulative = np.cumsum(self.risk_free_returns.dropna())
+                if len(self.risk_free_cumulative) > 0:
+                    self.risk_free_rate_total = self.risk_free_cumulative.iloc[-1]
+                else:
+                    self.risk_free_rate_total = 0.0
+            else:
+                self.risk_free_returns = None
+                self.risk_free_cumulative = None
+                self.risk_free_rate_total = 0.0
+                self.returns_data = returns_data.iloc[:, 1:]  # Remove coluna de data
         else:
             self.returns_data = returns_data
-            self.dates = None  # Sem coluna de datas
+            self.dates = None
+            self.risk_free_returns = None
+            self.risk_free_cumulative = None
+            self.risk_free_rate_total = 0.0
         
         # Converter para numérico e remover NaNs
         self.returns_data = self.returns_data.apply(pd.to_numeric, errors='coerce').dropna()
@@ -28,6 +48,13 @@ class PortfolioOptimizer:
             valid_indices = self.returns_data.index
             self.dates = self.dates.iloc[valid_indices].reset_index(drop=True)
             self.returns_data = self.returns_data.reset_index(drop=True)
+            
+            # Sincronizar risk_free_returns também se existir
+            if self.risk_free_returns is not None:
+                self.risk_free_returns = self.risk_free_returns.iloc[valid_indices].reset_index(drop=True)
+                # Recalcular acumulado com dados sincronizados
+                self.risk_free_cumulative = np.cumsum(self.risk_free_returns)
+                self.risk_free_rate_total = self.risk_free_cumulative.iloc[-1] if len(self.risk_free_cumulative) > 0 else 0.0
         
         # Se há ativos selecionados, filtrar apenas esses
         if selected_assets is not None:
@@ -38,6 +65,8 @@ class PortfolioOptimizer:
         self.n_periods = len(self.returns_data)
         
         print(f"Otimizador inicializado com {self.n_assets} ativos selecionados e {self.n_periods} períodos")
+        if self.risk_free_rate_total > 0:
+            print(f"Taxa livre de risco detectada: {self.risk_free_rate_total:.2%}")
     
     def calculate_portfolio_metrics(self, weights, risk_free_rate=0.0):
         """
@@ -103,13 +132,41 @@ class PortfolioOptimizer:
             r_squared = 0
             slope = 0
         
+        # NOVO: Métricas do EXCESSO DE RETORNO (v2.1)
+        excess_slope = 0
+        excess_r_squared = 0
+        excess_hc10 = 0
+        excess_cumulative = None
+        
+        if hasattr(self, 'risk_free_cumulative') and self.risk_free_cumulative is not None:
+            try:
+                # Calcular excesso acumulado diário
+                excess_cumulative = portfolio_cumulative - self.risk_free_cumulative.values
+                
+                # Regressão linear do EXCESSO
+                excess_slope, excess_intercept, excess_r_value, _, _ = stats.linregress(days_numeric, excess_cumulative)
+                excess_r_squared = excess_r_value ** 2
+                
+                # Volatilidade do excesso diário
+                excess_returns_daily = portfolio_returns_daily - self.risk_free_returns.values
+                excess_vol = np.std(excess_returns_daily, ddof=0) * np.sqrt(252)
+                
+                # HC10 do excesso
+                if excess_vol > 0 and excess_r_squared < 1:
+                    excess_hc10 = excess_slope / (excess_vol * (1 - excess_r_squared))
+                else:
+                    excess_hc10 = 0
+                    
+            except Exception as e:
+                print(f"Erro no cálculo de métricas do excesso: {e}")
+        
         return {
             'gv_final': gv_final,
             'annual_return': annual_return,
             'volatility': portfolio_vol,
             'sharpe_ratio': sharpe_ratio,
-            'excess_return': excess_return,  # Novo: retorno em excesso
-            'risk_free_rate': risk_free_rate,  # Novo: taxa livre de risco usada
+            'excess_return': excess_return,
+            'risk_free_rate': risk_free_rate,
             'hc10': hc10,
             'portfolio_returns_daily': portfolio_returns_daily,
             'portfolio_cumulative': portfolio_cumulative,
@@ -118,7 +175,12 @@ class PortfolioOptimizer:
             'var_95_daily': var_95_daily,
             'var_99_daily': var_99_daily,
             'var_95_annual': var_95_annual,
-            'var_99_annual': var_99_annual
+            'var_99_annual': var_99_annual,
+            # Novas métricas do excesso
+            'excess_slope': excess_slope,
+            'excess_r_squared': excess_r_squared,
+            'excess_hc10': excess_hc10,
+            'excess_cumulative': excess_cumulative
         }
     
     def optimize_portfolio(self, objective_type='sharpe', target_return=None, max_weight=1.0, risk_free_rate=0.0):
@@ -142,11 +204,40 @@ class PortfolioOptimizer:
             elif objective_type == 'hc10':
                 # Maximizar Inclinação/(1-R²)×Vol 
                 # Mas para estabilidade, minimizamos o inverso: (1-R²)×Vol/Inclinação
-                if metrics['slope'] != 0 and metrics['volatility'] > 0 and metrics['r_squared'] < 1:
-                    # Retornar o inverso para minimizar
-                    return (1 - metrics['r_squared']) * metrics['volatility'] / abs(metrics['slope'])
+                if metrics['volatility'] > 0 and metrics['r_squared'] < 1:
+                    if metrics['slope'] > 0.000001:  # Inclinação positiva pequena
+                        # Retornar o inverso para minimizar
+                        return (1 - metrics['r_squared']) * metrics['volatility'] / metrics['slope']
+                    elif metrics['slope'] < -0.000001:  # Inclinação negativa
+                        # Penalizar fortemente inclinações negativas
+                        return 1e10 - metrics['slope']  # Quanto mais negativo, pior
+                    else:  # Inclinação muito próxima de zero
+                        return 1e10
                 else:
                     # Valor alto para penalizar casos inválidos
+                    return 1e10
+            elif objective_type == 'excess_hc10':
+                # NOVO: Maximizar linearidade do EXCESSO de retorno
+                if not hasattr(self, 'risk_free_cumulative') or self.risk_free_cumulative is None:
+                    # Se não tem taxa livre, usar HC10 normal
+                    return objective_function(weights) if objective_type != 'excess_hc10' else 1e10
+                
+                # Calcular métricas incluindo excesso
+                if metrics.get('excess_hc10') is not None:
+                    # Mesma lógica do HC10 mas para excesso
+                    if metrics['excess_slope'] > 0.000001:
+                        # Precisamos calcular (1-R²)×Vol/Inclinação do excesso
+                        excess_returns_daily = metrics['portfolio_returns_daily'] - self.risk_free_returns.values
+                        excess_vol = np.std(excess_returns_daily, ddof=0) * np.sqrt(252)
+                        
+                        if excess_vol > 0 and metrics['excess_r_squared'] < 1:
+                            return (1 - metrics['excess_r_squared']) * excess_vol / metrics['excess_slope']
+                        else:
+                            return 1e10
+                    else:
+                        # Penalizar excesso negativo ou zero
+                        return 1e10 - metrics['excess_slope']
+                else:
                     return 1e10
             elif objective_type == 'return':
                 # Maximizar retorno (minimizar -retorno)
