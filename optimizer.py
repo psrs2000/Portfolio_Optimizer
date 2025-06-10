@@ -219,25 +219,24 @@ class PortfolioOptimizer:
             elif objective_type == 'excess_hc10':
                 # NOVO: Maximizar linearidade do EXCESSO de retorno
                 if not hasattr(self, 'risk_free_cumulative') or self.risk_free_cumulative is None:
-                    # Se não tem taxa livre, retornar erro alto
-                    return 1e10
+                    # Se não tem taxa livre, usar HC10 normal
+                    return objective_function(weights) if objective_type != 'excess_hc10' else 1e10
                 
                 # Calcular métricas incluindo excesso
-                if metrics.get('excess_slope') is not None:
-                    # Calcular volatilidade do excesso aqui para usar no objetivo
-                    excess_returns_daily = metrics['portfolio_returns_daily'] - self.risk_free_returns.values
-                    excess_vol = np.std(excess_returns_daily, ddof=0) * np.sqrt(252)
-                    
-                    if metrics['excess_slope'] > 0.000001 and excess_vol > 0 and metrics['excess_r_squared'] < 1:
-                        # Retornar o inverso para minimizar
-                        return (1 - metrics['excess_r_squared']) * excess_vol / metrics['excess_slope']
-                    else:
-                        # Penalizar casos ruins (inclinação negativa, zero ou vol zero)
-                        if metrics['excess_slope'] <= 0:
-                            # Quanto mais negativa a inclinação, pior
-                            return 1e10 + abs(metrics['excess_slope']) * 1e6
+                if metrics.get('excess_hc10') is not None:
+                    # Mesma lógica do HC10 mas para excesso
+                    if metrics['excess_slope'] > 0.000001:
+                        # Precisamos calcular (1-R²)×Vol/Inclinação do excesso
+                        excess_returns_daily = metrics['portfolio_returns_daily'] - self.risk_free_returns.values
+                        excess_vol = np.std(excess_returns_daily, ddof=0) * np.sqrt(252)
+                        
+                        if excess_vol > 0 and metrics['excess_r_squared'] < 1:
+                            return (1 - metrics['excess_r_squared']) * excess_vol / metrics['excess_slope']
                         else:
                             return 1e10
+                    else:
+                        # Penalizar excesso negativo ou zero
+                        return 1e10 - metrics['excess_slope']
                 else:
                     return 1e10
             elif objective_type == 'return':
