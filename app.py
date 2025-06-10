@@ -648,7 +648,7 @@ else:
     5. **Clique em otimizar** e receba os pesos ideais!
     
     ### 💡 Dica:
-    Se a coluna B tiver no nome "Taxa Livre", "CDI", "Selic", etc., o sistema detecta e já calcula  a taxa livre de risco do período!
+    Se a coluna B tiver no nome "Taxa Livre", "CDI", ou "Selic", o sistema detecta e já calcula  a taxa livre de risco do período!
     
     ### 🆕 Nova Funcionalidade:
     Otimização da diferença (Retorno Total - Taxa livre de risco)!
