@@ -636,10 +636,10 @@ else:
     
     1. **Baixe uma planilha** do link acima ou use sua própria
     
-    2. **Prepare sua planilha** com:
+    2. **Caso opte em usasr sua própria planilha** estruture assim:
        - Primeira coluna: Datas
        - Outras colunas: Retornos de cada ativo (base 0)
-       - **NOVO**: Coluna B pode ser Taxa Livre de Risco (opcional)
+       - **Atenção**: Coluna B é a coluna de referência - Taxa Livre de Risco.
     
     3. **Faça upload** do arquivo Excel
     
