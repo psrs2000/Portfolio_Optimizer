@@ -625,7 +625,7 @@ else:
     # Link para download dos dados
     st.markdown("### 📂 Dados Disponíveis")
     st.markdown(
-        "**Baixe planilhas com dados históricos de ativos:**\n\n"
+        "**Baixe planilhas com dados históricos de ativos caso não tenha uma:**\n\n"
         "🔗 [Acessar pasta no Google Drive](https://drive.google.com/drive/folders/1t8EcZZqGqPIH3pzZ-DdBytrr3Rb1TuwV?usp=sharing)"
     )
     st.markdown("---")
