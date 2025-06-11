@@ -16,14 +16,49 @@ st.set_page_config(
 st.title("📊 Otimizador de Portfólio")
 st.markdown("*Baseado na metodologia de Markowitz*")
 
-# Sidebar para upload
-with st.sidebar:
-    st.header("📁 Upload dos Dados")
-    uploaded_file = st.file_uploader(
-        "Escolha sua planilha Excel",
-        type=['xlsx', 'xls'],
-        help="Planilha com dados históricos dos ativos"
-    )
+# Configuração dos dados de exemplo no GitHub
+# IMPORTANTE: Substitua pelos seus valores reais!
+GITHUB_USER = "SEU_USUARIO_GITHUB"  # ← Coloque seu usuário aqui
+GITHUB_REPO = "SEU_REPOSITORIO"     # ← Coloque o nome do seu repositório aqui
+GITHUB_BRANCH = "main"
+
+# Arquivos de exemplo disponíveis
+SAMPLE_DATA = {
+    "🏢 Ações Brasileiras": {
+        "filename": "acoes_brasileiras.xlsx",
+        "description": "Principais ações do Ibovespa"
+    },
+    "🏠 Fundos Imobiliários": {
+        "filename": "fundos_imobiliarios.xlsx",
+        "description": "FIIs negociados na B3"
+    },
+    "💰 Portfólio com CDI": {
+        "filename": "portfolio_cdi.xlsx",
+        "description": "Exemplo com taxa livre de risco"
+    },
+    "🌍 ETFs Internacionais": {
+        "filename": "etfs_internacionais.xlsx",
+        "description": "ETFs de mercados globais"
+    },
+    "🪙 Criptomoedas": {
+        "filename": "criptomoedas.xlsx",
+        "description": "Bitcoin, Ethereum e principais"
+    }
+}
+
+def load_from_github(filename):
+    """
+    Carrega arquivo Excel diretamente do GitHub
+    """
+    url = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}/sample_data/{filename}"
+    
+    try:
+        df = pd.read_excel(url)
+        return df
+    except Exception as e:
+        st.error(f"Erro ao carregar arquivo do GitHub: {str(e)}")
+        st.info("Verifique se o arquivo existe e o repositório é público")
+        return None
 
 def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_returns=None):
     """
@@ -120,13 +155,76 @@ def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_re
     
     return pivot_table, comparison_table
 
-# Área principal
-if uploaded_file is not None:
-    try:
-        # Ler o arquivo
-        df = pd.read_excel(uploaded_file)
+# Sidebar para carregamento de dados
+with st.sidebar:
+    st.header("📁 Carregar Dados")
+    
+    # Tabs para organizar opções
+    tab_exemplo, tab_upload = st.tabs(["📊 Exemplos", "📤 Upload"])
+    
+    with tab_exemplo:
+        st.markdown("### Dados de Exemplo")
         
-        st.success("✅ Arquivo carregado com sucesso!")
+        # Verificar se GitHub está configurado
+        if GITHUB_USER == "SEU_USUARIO_GITHUB":
+            st.warning(
+                "⚠️ Configure o GitHub primeiro!\n\n"
+                "1. Edite o arquivo app.py\n"
+                "2. Substitua GITHUB_USER e GITHUB_REPO\n"
+                "3. Faça upload dos arquivos Excel em /sample_data/"
+            )
+        else:
+            st.info("Clique para carregar:")
+            
+            # Botões para cada dataset
+            for name, info in SAMPLE_DATA.items():
+                if st.button(
+                    f"{name}",
+                    use_container_width=True,
+                    help=info['description']
+                ):
+                    with st.spinner(f"Carregando {name}..."):
+                        df_temp = load_from_github(info['filename'])
+                        if df_temp is not None:
+                            st.session_state['df'] = df_temp
+                            st.session_state['data_source'] = name
+                            st.success("✅ Dados carregados!")
+                            st.rerun()
+    
+    with tab_upload:
+        st.markdown("### Upload Manual")
+        uploaded_file = st.file_uploader(
+            "Escolha sua planilha Excel",
+            type=['xlsx', 'xls'],
+            help="Planilha com dados históricos dos ativos"
+        )
+        
+        if uploaded_file is not None:
+            try:
+                df_temp = pd.read_excel(uploaded_file)
+                st.session_state['df'] = df_temp
+                st.session_state['data_source'] = "Upload Manual"
+                st.success("✅ Arquivo carregado!")
+            except Exception as e:
+                st.error(f"Erro ao ler arquivo: {str(e)}")
+    
+    # Link para Google Drive
+    st.markdown("---")
+    st.markdown(
+        "📂 **Baixar mais dados:**\n\n"
+        "[Pasta no Google Drive]"
+        "(https://drive.google.com/drive/folders/1t8EcZZqGqPIH3pzZ-DdBytrr3Rb1TuwV?usp=sharing)"
+    )
+
+# Verificar se há dados carregados
+df = st.session_state.get('df', None)
+
+# Área principal
+if df is not None:
+    try:
+        # Mostrar origem dos dados
+        data_source = st.session_state.get('data_source', 'Desconhecida')
+        st.success(f"✅ Dados carregados: **{data_source}**")
         
         # Mostrar preview dos dados
         with st.expander("📋 Ver dados carregados"):
@@ -622,10 +720,22 @@ else:
     # Mensagem quando não há arquivo
     st.info("👈 Faça upload de uma planilha Excel para começar")
     
+    # Verificar se GitHub está configurado
+    if GITHUB_USER == "SEU_USUARIO_GITHUB":
+        st.warning(
+            "⚠️ **Para habilitar os dados de exemplo:**\n\n"
+            "1. **Configure o GitHub** no código:\n"
+            "   - Substitua `GITHUB_USER` pelo seu usuário\n"
+            "   - Substitua `GITHUB_REPO` pelo nome do seu repositório\n\n"
+            "2. **Crie a pasta** `sample_data/` no seu repositório\n\n"
+            "3. **Faça upload** dos arquivos Excel de exemplo\n\n"
+            "4. **Pronto!** Os botões de exemplo funcionarão automaticamente"
+        )
+    
     # Link para download dos dados
     st.markdown("### 📂 Dados Disponíveis")
     st.markdown(
-        "**Baixe planilhas com dados históricos de ativos caso não tenha uma:**\n\n"
+        "**Baixe planilhas com dados históricos de ativos:**\n\n"
         "🔗 [Acessar pasta no Google Drive](https://drive.google.com/drive/folders/1t8EcZZqGqPIH3pzZ-DdBytrr3Rb1TuwV?usp=sharing)"
     )
     st.markdown("---")
@@ -636,10 +746,10 @@ else:
     
     1. **Baixe uma planilha** do link acima ou use sua própria
     
-    2. **Caso opte em usasr sua própria planilha** estruture assim:
+    2. **Estruture sua planilha** assim:
        - Primeira coluna: Datas
+       - Segunda coluna (opcional): Taxa Livre de Risco
        - Outras colunas: Retornos de cada ativo (base 0)
-       - **Atenção**: Coluna B é a coluna de referência - Taxa Livre de Risco.
     
     3. **Faça upload** do arquivo Excel
     
@@ -648,10 +758,7 @@ else:
     5. **Clique em otimizar** e receba os pesos ideais!
     
     ### 💡 Dica:
-    Se a coluna B tiver no nome "Taxa Livre", "CDI", ou "Selic", o sistema detecta e já calcula  a taxa livre de risco do período!
-    
-    ### 🆕 Nova Funcionalidade:
-    Otimização da diferença (Retorno Total - Taxa livre de risco)!
+    Se a coluna B tiver no nome "Taxa Livre", "CDI", ou "Selic", o sistema detecta automaticamente!
     """)
 
 # Rodapé
