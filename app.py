@@ -26,8 +26,8 @@ st.markdown("*Baseado na metodologia de Markowitz*")
 
 # Configuração dos dados de exemplo no GitHub
 # IMPORTANTE: Substitua pelos seus valores reais!
-GITHUB_USER = "SEU_USUARIO_GITHUB"  # ← Coloque seu usuário aqui
-GITHUB_REPO = "SEU_REPOSITORIO"     # ← Coloque o nome do seu repositório aqui
+GITHUB_USER = "psrs2000"  # ← Coloque seu usuário aqui
+GITHUB_REPO = "Portfolio_optimizer"     # ← Coloque o nome do seu repositório aqui
 GITHUB_BRANCH = "main"
 
 # Arquivos de exemplo disponíveis
