@@ -1,4 +1,4 @@
-import streamlit as st
+Fimport streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -34,7 +34,7 @@ SAMPLE_DATA = {
     },
     "💰 Fundos de Investimento": {
         "filename": "fundos_de_investimento.xlsx",
-        "description": "Exemplo com taxa livre de risco"
+        "description": "Exemplo com Fundos cadastrados na CVM"
     },
     "🌍 ETFs Nacionais": {
         "filename": "etfs_nacionais.xlsx",
