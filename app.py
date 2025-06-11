@@ -34,7 +34,7 @@ SAMPLE_DATA = {
     },
     "💰 Fundos de Investimento": {
         "filename": "fundos_de_investimento.xlsx",
-        "description": "Exemplo com Fundos cadastrados na CVM"
+        "description": "Exemplo com taxa livre de risco"
     },
     "🌍 ETFs Nacionais": {
         "filename": "etfs_nacionais.xlsx",
@@ -239,7 +239,7 @@ if df is not None:
             if any(term in col_name for term in ['taxa', 'livre', 'risco', 'ibov', 'ref', 'cdi', 'selic']):
                 has_risk_free = True
                 risk_free_column_name = df.columns[1]
-                st.info(f"📊 Referência detectada: '{risk_free_column_name}'")
+                st.info(f"📊 Taxa livre de risco detectada: '{risk_free_column_name}'")
         
         # Seleção de ativos
         st.header("🎯 Seleção de Ativos")
@@ -317,20 +317,20 @@ if df is not None:
                 # Mostrar taxa livre detectada como informação
                 detected_rate = temp_optimizer.risk_free_rate_total
                 st.metric(
-                    "🏛️ Referência",
+                    "🏛️ Taxa Livre de Risco",
                     f"{detected_rate:.2%}",
-                    help="Referência detectada automaticamente da coluna B (acumulada do período)"
+                    help="Taxa detectada automaticamente da coluna B (acumulada do período)"
                 )
                 used_risk_free_rate = detected_rate
             else:
                 # Campo manual se não detectou
                 used_risk_free_rate = st.number_input(
-                    "🏛️ Referência (%)",
+                    "🏛️ Taxa Livre de Risco (%)",
                     min_value=0.0,
                     max_value=100.0,
                     value=0.0,
                     step=0.1,
-                    help="Referência ACUMULADA do período"
+                    help="Taxa livre de risco ACUMULADA do período"
                 ) / 100
 # Botão de otimização
         if st.button("🚀 OTIMIZAR PORTFÓLIO", type="primary", use_container_width=True):
@@ -404,7 +404,7 @@ if df is not None:
                                 st.metric(
                                     "⚡ Sharpe Ratio", 
                                     f"{metrics['sharpe_ratio']:.3f}",
-                                    help=f" - (Retorno Total - Taxa Livre de Risco) / Volatilidade\nTaxa Livre de Risco usada: {metrics['risk_free_rate']:.2%}"
+                                    help=f"HC8 - (Retorno Total - Taxa Livre de Risco) / Volatilidade\nTaxa Livre de Risco usada: {metrics['risk_free_rate']:.2%}"
                                 )
                             
                             with col5:
@@ -460,24 +460,23 @@ if df is not None:
                                     help="Retorno Total - Taxa Livre de Risco (numerador do Sharpe Ratio)"
                                 )
                             
-                            # MODIFICAÇÃO: Seção específica para Linearidade do Excesso
+                            # NOVO: Se otimizou excesso, mostrar métricas específicas
                             if objective == "🆕 Maximizar Linearidade do Excesso" and metrics.get('excess_r_squared') is not None:
                                 st.subheader("🆕 Métricas de Linearidade do Excesso")
                                 col1, col2, col3 = st.columns(3)
                                 
-                                # MUDANÇA: Substituir Inclinação por Retorno Total do Excesso
                                 with col1:
                                     st.metric(
-                                        "🎯 Retorno Total do Excesso", 
-                                        f"{metrics['excess_return']:.2%}",
-                                        help="Retorno total acumulado ACIMA da taxa livre de risco (o Alpha que você captura!)"
+                                        "📈 Inclinação Excesso (×1000)", 
+                                        f"{metrics['excess_slope']*1000:.3f}",
+                                        help="Inclinação da regressão linear do EXCESSO de retorno"
                                     )
                                 
                                 with col2:
                                     st.metric(
                                         "📊 R² do Excesso", 
                                         f"{metrics['excess_r_squared']:.3f}",
-                                        help="Qualidade da linearidade do excesso (quanto mais próximo de 1, mais linear e previsível)"
+                                        help="Qualidade da linearidade do excesso (quanto mais próximo de 1, mais linear)"
                                     )
                                 
                                 with col3:
@@ -493,13 +492,6 @@ if df is not None:
                                         f"{excess_vol:.2%}",
                                         help="Volatilidade anualizada do excesso de retorno (desvio padrão do excesso × √252)"
                                     )
-                                
-                                # Adicionar explicação específica sobre a estratégia
-                                st.info(
-                                    "💡 **Estratégia de Alpha Linear**: Este portfólio foi otimizado para superar linearmente a taxa livre de risco. "
-                                    f"Com **{metrics['excess_return']:.2%}** de excesso total e **R² = {metrics['excess_r_squared']:.3f}**, "
-                                    "você pode implementar uma estratégia de: **Comprar este portfólio + Vender futuro do benchmark = CDI + Alpha linear!**"
-                                )
                             
                             # Explicação sobre VaR e Taxa Livre de Risco
                             st.info(
@@ -766,7 +758,7 @@ else:
     5. **Clique em otimizar** e receba os pesos ideais!
     
     ### 💡 Dica:
-    Se a coluna B tiver no nome "Taxa Livre", "CDI", "Selic", "ref" ou "ibov" o sistema detecta automaticamente!
+    Se a coluna B tiver no nome "Taxa Livre", "CDI", ou "Selic", o sistema detecta automaticamente!
     """)
 
 # Rodapé
