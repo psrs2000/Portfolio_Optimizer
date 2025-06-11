@@ -758,7 +758,7 @@ else:
     5. **Clique em otimizar** e receba os pesos ideais!
     
     ### 💡 Dica:
-    Se a coluna B tiver no nome "Taxa Livre", "CDI", ou "Selic", o sistema detecta automaticamente!
+    Se a coluna B tiver no nome "Taxa Livre", "CDI", "Selic", "ref" ou "ibov" o sistema detecta automaticamente!
     """)
 
 # Rodapé
