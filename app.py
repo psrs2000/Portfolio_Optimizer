@@ -32,13 +32,13 @@ SAMPLE_DATA = {
         "filename": "fundos_imobiliarios.xlsx",
         "description": "FIIs negociados na B3"
     },
-    "💰 Portfólio com CDI": {
-        "filename": "portfolio_cdi.xlsx",
+    "💰 Fundos de Investimento": {
+        "filename": "fundos_de_investimento.xlsx",
         "description": "Exemplo com taxa livre de risco"
     },
-    "🌍 ETFs Internacionais": {
-        "filename": "etfs_internacionais.xlsx",
-        "description": "ETFs de mercados globais"
+    "🌍 ETFs Nacionais": {
+        "filename": "etfs_nacionais.xlsx",
+        "description": "ETFs de mercados Nacionais"
     },
     "🪙 Criptomoedas": {
         "filename": "criptomoedas.xlsx",
