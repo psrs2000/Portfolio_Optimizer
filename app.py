@@ -408,19 +408,11 @@ if df is not None:
                                 )
                             
                             with col5:
-                                # MODIFICAÇÃO: Trocar Inclinação por Retorno Total do Excesso quando otimizando linearidade do excesso
-                                if objective == "🆕 Maximizar Linearidade do Excesso":
-                                    st.metric(
-                                        "🎯 Retorno Total do Excesso", 
-                                        f"{metrics['excess_return']:.2%}",
-                                        help="Alpha capturado: Retorno total ACIMA da taxa livre de risco - a métrica otimizada!"
-                                    )
-                                else:
-                                    st.metric(
-                                        "📈 Inclinação (×1000)", 
-                                        f"{metrics['slope']*1000:.3f}",
-                                        help="Inclinação da regressão linear do retorno acumulado (multiplicada por 1000 para melhor visualização)"
-                                    )
+                                st.metric(
+                                    "📈 Inclinação (×1000)", 
+                                    f"{metrics['slope']*1000:.3f}",
+                                    help="Inclinação da regressão linear do retorno acumulado (multiplicada por 1000 para melhor visualização)"
+                                )
                             
                             with col6:
                                 st.metric(
