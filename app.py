@@ -239,7 +239,7 @@ if df is not None:
             if any(term in col_name for term in ['taxa', 'livre', 'risco', 'ibov', 'ref', 'cdi', 'selic']):
                 has_risk_free = True
                 risk_free_column_name = df.columns[1]
-                st.info(f"📊 Taxa livre de risco detectada: '{risk_free_column_name}'")
+                st.info(f"📊 Referência detectada: '{risk_free_column_name}'")
         
         # Seleção de ativos
         st.header("🎯 Seleção de Ativos")
@@ -317,20 +317,20 @@ if df is not None:
                 # Mostrar taxa livre detectada como informação
                 detected_rate = temp_optimizer.risk_free_rate_total
                 st.metric(
-                    "🏛️ Taxa Livre de Risco",
+                    "🏛️ Referência",
                     f"{detected_rate:.2%}",
-                    help="Taxa detectada automaticamente da coluna B (acumulada do período)"
+                    help="Referência detectada automaticamente da coluna B (acumulada do período)"
                 )
                 used_risk_free_rate = detected_rate
             else:
                 # Campo manual se não detectou
                 used_risk_free_rate = st.number_input(
-                    "🏛️ Taxa Livre de Risco (%)",
+                    "🏛️ Referência (%)",
                     min_value=0.0,
                     max_value=100.0,
                     value=0.0,
                     step=0.1,
-                    help="Taxa livre de risco ACUMULADA do período"
+                    help="Referência ACUMULADA do período"
                 ) / 100
 # Botão de otimização
         if st.button("🚀 OTIMIZAR PORTFÓLIO", type="primary", use_container_width=True):
@@ -404,7 +404,7 @@ if df is not None:
                                 st.metric(
                                     "⚡ Sharpe Ratio", 
                                     f"{metrics['sharpe_ratio']:.3f}",
-                                    help=f"HC8 - (Retorno Total - Taxa Livre de Risco) / Volatilidade\nTaxa Livre de Risco usada: {metrics['risk_free_rate']:.2%}"
+                                    help=f" - (Retorno Total - Taxa Livre de Risco) / Volatilidade\nTaxa Livre de Risco usada: {metrics['risk_free_rate']:.2%}"
                                 )
                             
                             with col5:
