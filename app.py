@@ -236,7 +236,7 @@ if df is not None:
         risk_free_column_name = None
         if len(df.columns) > 2 and isinstance(df.columns[1], str):
             col_name = df.columns[1].lower()
-            if any(term in col_name for term in ['taxa', 'livre', 'risco', 'risk', 'free', 'cdi', 'selic']):
+            if any(term in col_name for term in ['taxa', 'livre', 'risco', 'ibov', 'ref', 'cdi', 'selic']):
                 has_risk_free = True
                 risk_free_column_name = df.columns[1]
                 st.info(f"📊 Taxa livre de risco detectada: '{risk_free_column_name}'")
