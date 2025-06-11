@@ -17,7 +17,7 @@ class PortfolioOptimizer:
             
             # Verificar se segunda coluna é Taxa Livre de Risco
             if len(returns_data.columns) > 2 and isinstance(returns_data.columns[1], str) and any(
-                term in returns_data.columns[1].lower() for term in ['taxa', 'livre', 'risco', 'risk', 'free', 'cdi', 'selic']
+                term in returns_data.columns[1].lower() for term in ['taxa', 'livre', 'risco', 'ibov', 'ref', 'cdi', 'selic']
             ):
                 self.risk_free_returns = returns_data.iloc[:, 1].apply(pd.to_numeric, errors='coerce')  # Coluna B
                 self.returns_data = returns_data.iloc[:, 2:]  # Ativos começam na coluna C
