@@ -12,14 +12,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Esconder o botão do GitHub
-hide_github_button = """
-<style>
-    .stDeployButton {display:none;}
-</style>
-"""
-st.markdown(hide_github_button, unsafe_allow_html=True)
-
 # Título
 st.title("📊 Otimizador de Portfólio")
 st.markdown("*Baseado na metodologia de Markowitz*")
@@ -27,7 +19,7 @@ st.markdown("*Baseado na metodologia de Markowitz*")
 # Configuração dos dados de exemplo no GitHub
 # IMPORTANTE: Substitua pelos seus valores reais!
 GITHUB_USER = "psrs2000"  # ← Coloque seu usuário aqui
-GITHUB_REPO = "Portfolio_optimizer"     # ← Coloque o nome do seu repositório aqui
+GITHUB_REPO = "Portfolio_Optimizer"     # ← Coloque o nome do seu repositório aqui
 GITHUB_BRANCH = "main"
 
 # Arquivos de exemplo disponíveis
@@ -37,16 +29,16 @@ SAMPLE_DATA = {
         "description": "Principais ações do Ibovespa"
     },
     "🏠 Fundos Imobiliários": {
-        "filename": "Fundos_Imobiliarios.xlsx",  # Mudado para corresponder ao seu arquivo
+        "filename": "fundos_imobiliarios.xlsx",
         "description": "FIIs negociados na B3"
     },
-    "💰 Portfólio com CDI": {
-        "filename": "portfolio_cdi.xlsx",
+    "💰 Fundos de Investimento": {
+        "filename": "fundos_de_investimento.xlsx",
         "description": "Exemplo com taxa livre de risco"
     },
-    "🌍 ETFs Internacionais": {
-        "filename": "etfs_internacionais.xlsx",
-        "description": "ETFs de mercados globais"
+    "🌍 ETFs Nacionais": {
+        "filename": "etfs_nacionais.xlsx",
+        "description": "ETFs de mercados Nacionais"
     },
     "🪙 Criptomoedas": {
         "filename": "criptomoedas.xlsx",
@@ -244,7 +236,7 @@ if df is not None:
         risk_free_column_name = None
         if len(df.columns) > 2 and isinstance(df.columns[1], str):
             col_name = df.columns[1].lower()
-            if any(term in col_name for term in ['taxa', 'livre', 'risco', 'risk', 'free', 'cdi', 'selic']):
+            if any(term in col_name for term in ['taxa', 'livre', 'risco', 'ibov', 'ref', 'cdi', 'selic']):
                 has_risk_free = True
                 risk_free_column_name = df.columns[1]
                 st.info(f"📊 Taxa livre de risco detectada: '{risk_free_column_name}'")
