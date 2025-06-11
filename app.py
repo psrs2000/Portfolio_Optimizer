@@ -460,23 +460,24 @@ if df is not None:
                                     help="Retorno Total - Taxa Livre de Risco (numerador do Sharpe Ratio)"
                                 )
                             
-                            # NOVO: Se otimizou excesso, mostrar métricas específicas
+                            # MODIFICAÇÃO: Seção específica para Linearidade do Excesso
                             if objective == "🆕 Maximizar Linearidade do Excesso" and metrics.get('excess_r_squared') is not None:
                                 st.subheader("🆕 Métricas de Linearidade do Excesso")
                                 col1, col2, col3 = st.columns(3)
                                 
+                                # MUDANÇA: Substituir Inclinação por Retorno Total do Excesso
                                 with col1:
                                     st.metric(
-                                        "📈 Inclinação Excesso (×1000)", 
-                                        f"{metrics['excess_slope']*1000:.3f}",
-                                        help="Inclinação da regressão linear do EXCESSO de retorno"
+                                        "🎯 Retorno Total do Excesso", 
+                                        f"{metrics['excess_return']:.2%}",
+                                        help="Retorno total acumulado ACIMA da taxa livre de risco (o Alpha que você captura!)"
                                     )
                                 
                                 with col2:
                                     st.metric(
                                         "📊 R² do Excesso", 
                                         f"{metrics['excess_r_squared']:.3f}",
-                                        help="Qualidade da linearidade do excesso (quanto mais próximo de 1, mais linear)"
+                                        help="Qualidade da linearidade do excesso (quanto mais próximo de 1, mais linear e previsível)"
                                     )
                                 
                                 with col3:
@@ -492,6 +493,13 @@ if df is not None:
                                         f"{excess_vol:.2%}",
                                         help="Volatilidade anualizada do excesso de retorno (desvio padrão do excesso × √252)"
                                     )
+                                
+                                # Adicionar explicação específica sobre a estratégia
+                                st.info(
+                                    "💡 **Estratégia de Alpha Linear**: Este portfólio foi otimizado para superar linearmente a taxa livre de risco. "
+                                    f"Com **{metrics['excess_return']:.2%}** de excesso total e **R² = {metrics['excess_r_squared']:.3f}**, "
+                                    "você pode implementar uma estratégia de: **Comprar este portfólio + Vender futuro do benchmark = CDI + Alpha linear!**"
+                                )
                             
                             # Explicação sobre VaR e Taxa Livre de Risco
                             st.info(
