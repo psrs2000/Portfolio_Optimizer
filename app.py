@@ -383,7 +383,7 @@ if df is not None:
                                 st.metric(
                                     "📈 Retorno Total", 
                                     f"{metrics['gv_final']:.2%}",
-                                    help="GV final - Retorno acumulado total"
+                                    help="Retorno acumulado total"
                                 )
                             
                             with col2:
