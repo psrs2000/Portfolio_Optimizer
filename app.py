@@ -444,34 +444,52 @@ if df is not None:
                             # NOVO: Se otimizou excesso, mostrar métricas específicas
                             if objective == "🆕 Maximizar Linearidade do Excesso" and metrics.get('excess_r_squared') is not None:
                                 st.subheader("🆕 Métricas de Linearidade do Excesso")
-                                col1, col2, col3 = st.columns(3)
+                                col1, col2, col3, col4 = st.columns(4)  # Era 3, agora é 4
+                                
+                                # Calcular métricas do excesso
+                                if hasattr(optimizer, 'risk_free_returns') and optimizer.risk_free_returns is not None:
+                                    excess_returns_daily = metrics['portfolio_returns_daily'] - optimizer.risk_free_returns.values
+                                    excess_vol = np.std(excess_returns_daily, ddof=0) * np.sqrt(252)
+                                    
+                                    # NOVO: VaR 95% do Excesso
+                                    mean_excess_daily = np.mean(excess_returns_daily)
+                                    std_excess_daily = np.std(excess_returns_daily, ddof=0)
+                                    var_95_excess_daily = mean_excess_daily - 1.65 * std_excess_daily
+                                    
+                                    # NOVO: Retorno anual do excesso
+                                    excess_total = metrics['gv_final'] - metrics['risk_free_rate']
+                                    annual_excess_return = (1 + excess_total) ** (252 / len(excess_returns_daily)) - 1
+                                else:
+                                    excess_vol = 0
+                                    var_95_excess_daily = 0
+                                    annual_excess_return = 0
                                 
                                 with col1:
-                                    st.metric(
-                                        "📈 Inclinação Excesso (×1000)", 
-                                        f"{metrics['excess_slope']*1000:.3f}",
-                                        help="Inclinação da regressão linear do EXCESSO de retorno"
-                                    )
-                                
-                                with col2:
                                     st.metric(
                                         "📊 R² do Excesso", 
                                         f"{metrics['excess_r_squared']:.3f}",
                                         help="Qualidade da linearidade do excesso (quanto mais próximo de 1, mais linear)"
                                     )
                                 
-                                with col3:
-                                    # Calcular volatilidade do excesso
-                                    if hasattr(optimizer, 'risk_free_returns') and optimizer.risk_free_returns is not None:
-                                        excess_returns_daily = metrics['portfolio_returns_daily'] - optimizer.risk_free_returns.values
-                                        excess_vol = np.std(excess_returns_daily, ddof=0) * np.sqrt(252)
-                                    else:
-                                        excess_vol = 0
-                                    
+                                with col2:
                                     st.metric(
                                         "📊 Volatilidade do Excesso", 
                                         f"{excess_vol:.2%}",
                                         help="Volatilidade anualizada do excesso de retorno (desvio padrão do excesso × √252)"
+                                    )
+                                
+                                with col3:
+                                    st.metric(
+                                        "⚠️ VaR 95% (Diário) do Excesso", 
+                                        f"{var_95_excess_daily:.2%}",
+                                        help="VaR 95% calculado sobre os retornos do excesso diário"
+                                    )
+                                
+                                with col4:
+                                    st.metric(
+                                        "📅 Retorno Anual do Excesso", 
+                                        f"{annual_excess_return:.2%}",
+                                        help="Retorno anualizado do excesso de retorno"
                                     )
                             
                             # Explicação sobre VaR e Taxa Livre de Risco
