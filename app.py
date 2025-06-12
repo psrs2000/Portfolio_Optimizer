@@ -397,7 +397,7 @@ if df is not None:
                                 st.metric(
                                     "📊 Volatilidade", 
                                     f"{metrics['volatility']:.2%}",
-                                    help="HC5 - Risco anualizado (DESVPAD.P × √252)"
+                                    help="Risco anualizado (DESVPAD.P × √252)"
                                 )
                             
                             with col4:
