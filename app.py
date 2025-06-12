@@ -239,7 +239,7 @@ if df is not None:
             if any(term in col_name for term in ['taxa', 'livre', 'risco', 'ibov', 'ref', 'cdi', 'selic']):
                 has_risk_free = True
                 risk_free_column_name = df.columns[1]
-                st.info(f"📊 Taxa livre de risco detectada: '{risk_free_column_name}'")
+                st.info(f"📊 Taxa de referência detectada: '{risk_free_column_name}'")
         
         # Seleção de ativos
         st.header("🎯 Seleção de Ativos")
@@ -317,7 +317,7 @@ if df is not None:
                 # Mostrar taxa livre detectada como informação
                 detected_rate = temp_optimizer.risk_free_rate_total
                 st.metric(
-                    "🏛️ Taxa Livre de Risco",
+                    "🏛️ Taxa de referência",
                     f"{detected_rate:.2%}",
                     help="Taxa detectada automaticamente da coluna B (acumulada do período)"
                 )
@@ -325,7 +325,7 @@ if df is not None:
             else:
                 # Campo manual se não detectou
                 used_risk_free_rate = st.number_input(
-                    "🏛️ Taxa Livre de Risco (%)",
+                    "🏛️ Taxa de referência (%)",
                     min_value=0.0,
                     max_value=100.0,
                     value=0.0,
@@ -448,7 +448,7 @@ if df is not None:
                             
                             with col3:
                                 st.metric(
-                                    "🏛️ Taxa Livre de Risco", 
+                                    "🏛️ Taxa de referência", 
                                     f"{metrics['risk_free_rate']:.2%}",
                                     help="Taxa livre de risco acumulada do período usada no cálculo"
                                 )
