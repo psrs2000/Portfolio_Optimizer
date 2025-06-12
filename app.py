@@ -681,7 +681,7 @@ if df is not None:
                                 
                                 # Se temos tabela de excesso, mostrar também
                                 if excess_table is not None:
-                                    st.subheader("📊 Excesso de Retorno Mensal (Portfólio - Taxa Livre)")
+                                    st.subheader("📊 Excesso de Retorno Mensal (Portfólio - Taxa de Referência)")
                                     
                                     excess_display = excess_table.copy()
                                     
