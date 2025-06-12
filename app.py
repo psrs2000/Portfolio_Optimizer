@@ -450,7 +450,7 @@ if df is not None:
                                 st.metric(
                                     "🏛️ Taxa de referência", 
                                     f"{metrics['risk_free_rate']:.2%}",
-                                    help="Taxa livre de risco acumulada do período usada no cálculo"
+                                    help="Taxa de referência acumulada do período usada no cálculo"
                                 )
                             
                             with col4:
