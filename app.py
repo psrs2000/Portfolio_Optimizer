@@ -455,9 +455,9 @@ if df is not None:
                             
                             with col4:
                                 st.metric(
-                                    "📈 Retorno em Excesso", 
+                                    "📈 Retorno do Excesso", 
                                     f"{metrics['excess_return']:.2%}",
-                                    help="Retorno Total - Taxa Livre de Risco (numerador do Sharpe Ratio)"
+                                    help="Retorno Total - Taxa de referência (numerador do Sharpe Ratio)"
                                 )
                             
                             # NOVO: Se otimizou excesso, mostrar métricas específicas
