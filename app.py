@@ -377,7 +377,7 @@ if df is not None:
                             metrics = result['metrics']
                             
                             # Primeira linha de métricas
-                            col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+                            col1, col2, col3, col4, col5 = st.columns(5)
                             
                             with col1:
                                 st.metric(
@@ -409,24 +409,11 @@ if df is not None:
                             
                             with col5:
                                 st.metric(
-                                    "📈 Inclinação (×1000)", 
-                                    f"{metrics['slope']*1000:.3f}",
-                                    help="Inclinação da regressão linear do retorno acumulado (multiplicada por 1000 para melhor visualização)"
-                                )
-                            
-                            with col6:
-                                st.metric(
-                                    "🎯 Inclinação/[(1-R²)×Vol]", 
-                                    f"{metrics['hc10']:.4f}",
-                                    help="Inclinação / [Volatilidade × (1-R²)]"
-                                )
-                            
-                            with col7:
-                                st.metric(
                                     "📈 R²", 
                                     f"{metrics['r_squared']:.3f}",
                                     help="Qualidade da linearidade da tendência"
                                 )
+                            
                             
                             # Segunda linha - Métricas de risco e taxa de referência
                             st.subheader("📊 Métricas de Risco e Taxa de referência")
@@ -439,21 +426,15 @@ if df is not None:
                                     help="Perda máxima esperada em 95% dos dias"
                                 )
                             
-                            with col2:
-                                st.metric(
-                                    "🚨 VaR 99% (Diário)", 
-                                    f"{metrics['var_99_daily']:.2%}",
-                                    help="Perda máxima esperada em 99% dos dias"
-                                )
                             
-                            with col3:
+                            with col2:
                                 st.metric(
                                     "🏛️ Taxa de referência", 
                                     f"{metrics['risk_free_rate']:.2%}",
                                     help="Taxa de referência acumulada do período usada no cálculo"
                                 )
                             
-                            with col4:
+                            with col3:
                                 st.metric(
                                     "📈 Retorno do Excesso", 
                                     f"{metrics['excess_return']:.2%}",
