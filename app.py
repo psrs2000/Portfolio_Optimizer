@@ -404,7 +404,7 @@ if df is not None:
                                 st.metric(
                                     "⚡ Sharpe Ratio", 
                                     f"{metrics['sharpe_ratio']:.3f}",
-                                    help=f"HC8 - (Retorno Total - Taxa Livre de Risco) / Volatilidade\nTaxa Livre de Risco usada: {metrics['risk_free_rate']:.2%}"
+                                    help=f" (Retorno Total - Taxa de referência) / Volatilidade\nTaxa de referência usada: {metrics['risk_free_rate']:.2%}"
                                 )
                             
                             with col5:
