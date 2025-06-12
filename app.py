@@ -34,7 +34,7 @@ SAMPLE_DATA = {
     },
     "💰 Fundos de Investimento": {
         "filename": "fundos_de_investimento.xlsx",
-        "description": "Fundos cadastrados na CVM"
+        "description": "Exemplo com fundos de investimento cadastrados na CVM"
     },
     "🌍 ETFs Nacionais": {
         "filename": "etfs_nacionais.xlsx",
@@ -231,7 +231,7 @@ if df is not None:
             st.write(f"Dimensões: {df.shape[0]} linhas x {df.shape[1]} colunas")
             st.dataframe(df.head(10))
         
-        # Verificar se há taxa livre de risco na coluna B
+        # Verificar se há taxa de referência na coluna B
         has_risk_free = False
         risk_free_column_name = None
         if len(df.columns) > 2 and isinstance(df.columns[1], str):
@@ -239,7 +239,7 @@ if df is not None:
             if any(term in col_name for term in ['taxa', 'livre', 'risco', 'ibov', 'ref', 'cdi', 'selic']):
                 has_risk_free = True
                 risk_free_column_name = df.columns[1]
-                st.info(f"📊 Taxa livre de risco detectada: '{risk_free_column_name}'")
+                st.info(f"📊 Taxa de referência detectada: '{risk_free_column_name}'")
         
         # Seleção de ativos
         st.header("🎯 Seleção de Ativos")
@@ -317,7 +317,7 @@ if df is not None:
                 # Mostrar taxa livre detectada como informação
                 detected_rate = temp_optimizer.risk_free_rate_total
                 st.metric(
-                    "🏛️ Taxa Livre de Risco",
+                    "🏛️ Taxa de referência",
                     f"{detected_rate:.2%}",
                     help="Taxa detectada automaticamente da coluna B (acumulada do período)"
                 )
@@ -325,12 +325,12 @@ if df is not None:
             else:
                 # Campo manual se não detectou
                 used_risk_free_rate = st.number_input(
-                    "🏛️ Taxa Livre de Risco (%)",
+                    "🏛️ Taxa de referência (%)",
                     min_value=0.0,
                     max_value=100.0,
                     value=0.0,
                     step=0.1,
-                    help="Taxa livre de risco ACUMULADA do período"
+                    help="Taxa de referência ACUMULADA do período"
                 ) / 100
 # Botão de otimização
         if st.button("🚀 OTIMIZAR PORTFÓLIO", type="primary", use_container_width=True):
@@ -383,7 +383,7 @@ if df is not None:
                                 st.metric(
                                     "📈 Retorno Total", 
                                     f"{metrics['gv_final']:.2%}",
-                                    help="GV final - Retorno acumulado total"
+                                    help="Retorno acumulado total"
                                 )
                             
                             with col2:
@@ -397,14 +397,14 @@ if df is not None:
                                 st.metric(
                                     "📊 Volatilidade", 
                                     f"{metrics['volatility']:.2%}",
-                                    help="HC5 - Risco anualizado (DESVPAD.P × √252)"
+                                    help="Risco anualizado (DESVPAD.P × √252)"
                                 )
                             
                             with col4:
                                 st.metric(
                                     "⚡ Sharpe Ratio", 
                                     f"{metrics['sharpe_ratio']:.3f}",
-                                    help=f"HC8 - (Retorno Total - Taxa Livre de Risco) / Volatilidade\nTaxa Livre de Risco usada: {metrics['risk_free_rate']:.2%}"
+                                    help=f" (Retorno Total - Taxa de referência) / Volatilidade\nTaxa de referência usada: {metrics['risk_free_rate']:.2%}"
                                 )
                             
                             with col5:
@@ -428,8 +428,8 @@ if df is not None:
                                     help="Qualidade da linearidade da tendência"
                                 )
                             
-                            # Segunda linha - Métricas de risco e taxa livre de risco
-                            st.subheader("📊 Métricas de Risco e Taxa Livre de Risco")
+                            # Segunda linha - Métricas de risco e taxa de referência
+                            st.subheader("📊 Métricas de Risco e Taxa de referência")
                             col1, col2, col3, col4 = st.columns(4)
                             
                             with col1:
@@ -448,16 +448,16 @@ if df is not None:
                             
                             with col3:
                                 st.metric(
-                                    "🏛️ Taxa Livre de Risco", 
+                                    "🏛️ Taxa de referência", 
                                     f"{metrics['risk_free_rate']:.2%}",
-                                    help="Taxa livre de risco acumulada do período usada no cálculo"
+                                    help="Taxa de referência acumulada do período usada no cálculo"
                                 )
                             
                             with col4:
                                 st.metric(
-                                    "📈 Retorno em Excesso", 
+                                    "📈 Retorno do Excesso", 
                                     f"{metrics['excess_return']:.2%}",
-                                    help="Retorno Total - Taxa Livre de Risco (numerador do Sharpe Ratio)"
+                                    help="Retorno Total - Taxa de referência (numerador do Sharpe Ratio)"
                                 )
                             
                             # NOVO: Se otimizou excesso, mostrar métricas específicas
@@ -681,7 +681,7 @@ if df is not None:
                                 
                                 # Se temos tabela de excesso, mostrar também
                                 if excess_table is not None:
-                                    st.subheader("📊 Excesso de Retorno Mensal (Portfólio - Taxa Livre)")
+                                    st.subheader("📊 Excesso de Retorno Mensal (Portfólio - Taxa de Referência)")
                                     
                                     excess_display = excess_table.copy()
                                     
@@ -748,7 +748,7 @@ else:
     
     2. **Estruture sua planilha** assim:
        - Primeira coluna: Datas
-       - Segunda coluna: Taxa de Referência
+       - Segunda coluna: Coluna de referência (CDI, IBOV, etc)
        - Outras colunas: Retornos de cada ativo (base 0)
     
     3. **Faça upload** do arquivo Excel
@@ -758,7 +758,7 @@ else:
     5. **Clique em otimizar** e receba os pesos ideais!
     
     ### 💡 Dica:
-    Se a coluna B tiver no nome "Taxa Livre", "CDI", "Selic", "Ref" ou "IBOV" o sistema detecta e calcula o retorno acumulado dessa coluna!
+    Se a célula B1 tiver no nome "Taxa Livre", "CDI", "Selic", "Ref" ou "IBOV" o sistema detecta e calcula o retorno dessa coluna!
     """)
 
 # Rodapé
