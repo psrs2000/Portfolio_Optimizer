@@ -34,7 +34,7 @@ SAMPLE_DATA = {
     },
     "💰 Fundos de Investimento": {
         "filename": "fundos_de_investimento.xlsx",
-        "description": "Exemplo com taxa livre de risco"
+        "description": "Fundos cadastrados na CVM"
     },
     "🌍 ETFs Nacionais": {
         "filename": "etfs_nacionais.xlsx",
@@ -748,7 +748,7 @@ else:
     
     2. **Estruture sua planilha** assim:
        - Primeira coluna: Datas
-       - Segunda coluna (opcional): Taxa Livre de Risco
+       - Segunda coluna: Taxa de Referência
        - Outras colunas: Retornos de cada ativo (base 0)
     
     3. **Faça upload** do arquivo Excel
@@ -758,7 +758,7 @@ else:
     5. **Clique em otimizar** e receba os pesos ideais!
     
     ### 💡 Dica:
-    Se a coluna B tiver no nome "Taxa Livre", "CDI", ou "Selic", o sistema detecta automaticamente!
+    Se a coluna B tiver no nome "Taxa Livre", "CDI", "Selic", "Ref" ou "IBOV" o sistema detecta e calcula o retorno acumulado dessa coluna!
     """)
 
 # Rodapé
