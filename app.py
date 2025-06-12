@@ -377,7 +377,7 @@ if df is not None:
                             metrics = result['metrics']
                             
                             # Primeira linha de métricas
-                            col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+                            col1, col2, col3, col4, col5 = st.columns(5)
                             
                             with col1:
                                 st.metric(
@@ -409,9 +409,9 @@ if df is not None:
                             
                             with col5:
                                 st.metric(
-                                    "📈 Inclinação (×1000)", 
-                                    f"{metrics['slope']*1000:.3f}",
-                                    help="Inclinação da regressão linear do retorno acumulado (multiplicada por 1000 para melhor visualização)"
+                                    "📈 R²", 
+                                    f"{metrics['r_squared']:.3f}",
+                                    help="Qualidade da linearidade da tendência"
                                 )
                             
                             with col6:
@@ -567,7 +567,7 @@ if df is not None:
                                     x=list(periods),
                                     y=optimizer.risk_free_cumulative * 100,
                                     mode='lines',
-                                    name='Taxa de Referência',
+                                    name='Taxa Livre de Risco',
                                     line=dict(color='#ff7f0e', width=2, dash='dash')
                                 ))
                                 
