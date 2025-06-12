@@ -567,7 +567,7 @@ if df is not None:
                                     x=list(periods),
                                     y=optimizer.risk_free_cumulative * 100,
                                     mode='lines',
-                                    name='Taxa de Refeência',
+                                    name='Taxa de Referência',
                                     line=dict(color='#ff7f0e', width=2, dash='dash')
                                 ))
                                 
