@@ -231,7 +231,7 @@ if df is not None:
             st.write(f"Dimensões: {df.shape[0]} linhas x {df.shape[1]} colunas")
             st.dataframe(df.head(10))
         
-        # Verificar se há taxa livre de risco na coluna B
+        # Verificar se há taxa de referência na coluna B
         has_risk_free = False
         risk_free_column_name = None
         if len(df.columns) > 2 and isinstance(df.columns[1], str):
@@ -330,7 +330,7 @@ if df is not None:
                     max_value=100.0,
                     value=0.0,
                     step=0.1,
-                    help="Taxa livre de risco ACUMULADA do período"
+                    help="Taxa de referência ACUMULADA do período"
                 ) / 100
 # Botão de otimização
         if st.button("🚀 OTIMIZAR PORTFÓLIO", type="primary", use_container_width=True):
@@ -428,8 +428,8 @@ if df is not None:
                                     help="Qualidade da linearidade da tendência"
                                 )
                             
-                            # Segunda linha - Métricas de risco e taxa livre de risco
-                            st.subheader("📊 Métricas de Risco e Taxa Livre de Risco")
+                            # Segunda linha - Métricas de risco e taxa de referência
+                            st.subheader("📊 Métricas de Risco e Taxa de referência")
                             col1, col2, col3, col4 = st.columns(4)
                             
                             with col1:
