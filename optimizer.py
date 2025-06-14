@@ -94,6 +94,22 @@ class PortfolioOptimizer:
         excess_return = gv_final - risk_free_rate
         sharpe_ratio = excess_return / portfolio_vol if portfolio_vol > 0 else 0
         
+        # NOVO: Sortino Ratio
+        # Downside Deviation = volatilidade apenas dos retornos negativos
+        # Usar 0 como threshold (definição clássica)
+        negative_returns = portfolio_returns_daily[portfolio_returns_daily < 0]
+        
+        if len(negative_returns) > 0:
+            # Desvio padrão dos retornos negativos, anualizado
+            downside_deviation = np.std(negative_returns, ddof=0) * np.sqrt(252)
+        else:
+            # Se não há retornos negativos
+            downside_deviation = 0
+        
+        # Sortino Ratio
+        # Usa o excesso de retorno sobre a taxa livre dividido pelo downside deviation
+        sortino_ratio = excess_return / downside_deviation if downside_deviation > 0 else 0
+        
         # Retorno anualizado (para comparação)
         annual_return = (1 + gv_final) ** (252 / self.n_periods) - 1
         
@@ -165,6 +181,8 @@ class PortfolioOptimizer:
             'annual_return': annual_return,
             'volatility': portfolio_vol,
             'sharpe_ratio': sharpe_ratio,
+            'sortino_ratio': sortino_ratio,  # NOVO
+            'downside_deviation': downside_deviation,  # NOVO
             'excess_return': excess_return,
             'risk_free_rate': risk_free_rate,
             'hc10': hc10,
@@ -183,10 +201,12 @@ class PortfolioOptimizer:
             'excess_cumulative': excess_cumulative
         }
     
-    def optimize_portfolio(self, objective_type='sharpe', target_return=None, max_weight=1.0, risk_free_rate=0.0):
+    def optimize_portfolio(self, objective_type='sharpe', target_return=None, max_weight=1.0, min_weight=0.0, 
+                          risk_free_rate=0.0, individual_constraints=None):
         """
         Otimiza o portfólio (substitui o Solver do Excel)
         risk_free_rate: taxa livre de risco acumulada do período
+        individual_constraints: dicionário com limites específicos por ativo
         """
         
         def objective_function(weights):
@@ -195,6 +215,9 @@ class PortfolioOptimizer:
             if objective_type == 'sharpe':
                 # Maximizar Sharpe (minimizar -Sharpe)
                 return -metrics['sharpe_ratio']
+            elif objective_type == 'sortino':
+                # NOVO: Maximizar Sortino (minimizar -Sortino)
+                return -metrics['sortino_ratio']
             elif objective_type == 'volatility':
                 # Minimizar volatilidade
                 return metrics['volatility']
@@ -216,6 +239,28 @@ class PortfolioOptimizer:
                 else:
                     # Valor alto para penalizar casos inválidos
                     return 1e10
+                    
+            elif objective_type == 'quality_linear':
+                # NOVA: Minimizar [Vol × (1-R²)]/R² 
+                # Só funciona se temos taxa livre de risco detectada
+                if not hasattr(self, 'risk_free_cumulative') or self.risk_free_cumulative is None:
+                    return 1e10  # Penalizar se não tem taxa livre
+                
+                # Maximizar "qualidade da linearidade" 
+                if metrics['volatility'] > 0 and metrics['r_squared'] > 0.001:  # R² > 0.1%
+                    # Fórmula: [Vol × (1-R²)]/R²
+                    quality_metric = (metrics['volatility'] * (1 - metrics['r_squared'])) / metrics['r_squared']
+                    return quality_metric  # Minimizar (quanto menor, melhor a qualidade)
+                else:
+                    # Penalizar R² muito baixo ou volatilidade zero
+                    return 1e10
+
+            # EXPLICAÇÃO DA FÓRMULA:
+            # - R² alto (próximo de 1) → denominador grande → métrica pequena ✅
+            # - Vol baixa → numerador pequeno → métrica pequena ✅  
+            # - R² baixo (próximo de 0) → denominador pequeno → métrica grande (ruim) ✅
+            # - Vol alta → numerador grande → métrica grande (ruim) ✅        
+                                
             elif objective_type == 'excess_hc10':
                 # NOVO: Maximizar linearidade do EXCESSO de retorno
                 if not hasattr(self, 'risk_free_cumulative') or self.risk_free_cumulative is None:
@@ -250,8 +295,23 @@ class PortfolioOptimizer:
             {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
         ]
         
-        # Limites para cada peso (0% a max_weight%)
-        bounds = tuple((0, max_weight) for _ in range(self.n_assets))
+        # Limites para cada peso
+        if individual_constraints is not None:
+            # Usar limites individuais
+            bounds = []
+            for asset in self.assets:
+                if asset in individual_constraints:
+                    bounds.append((
+                        individual_constraints[asset]['min'],
+                        individual_constraints[asset]['max']
+                    ))
+                else:
+                    # Usar limites globais como fallback
+                    bounds.append((min_weight, max_weight))
+            bounds = tuple(bounds)
+        else:
+            # Usar limites globais para todos
+            bounds = tuple((min_weight, max_weight) for _ in range(self.n_assets))
         
         # Chute inicial (pesos iguais)
         initial_weights = np.array([1/self.n_assets] * self.n_assets)
@@ -274,6 +334,153 @@ class PortfolioOptimizer:
                 return {
                     'success': True,
                     'weights': optimal_weights,
+                    'metrics': metrics,
+                    'assets': self.assets
+                }
+            else:
+                return {
+                    'success': False,
+                    'message': f"Otimização falhou: {result.message}"
+                }
+                
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f"Erro na otimização: {str(e)}"
+            }
+    
+    def optimize_portfolio_with_shorts(self, selected_assets, short_assets, short_weights, 
+                                     objective_type='sharpe', max_weight=1.0, min_weight=0.0, 
+                                     risk_free_rate=0.0, individual_constraints=None):
+        """
+        Otimiza portfólio com posições short fixas
+        selected_assets: lista de ativos para otimizar (long)
+        short_assets: lista de ativos short
+        short_weights: dicionário com pesos dos ativos short
+        individual_constraints: dicionário com limites específicos por ativo
+        """
+        # Índices dos ativos
+        selected_indices = [self.assets.index(asset) for asset in selected_assets]
+        short_indices = [self.assets.index(asset) for asset in short_assets]
+        
+        # Número de ativos para otimizar (apenas os long)
+        n_optimize = len(selected_indices)
+        
+        def objective_function(weights_to_optimize):
+            # Criar array de pesos completo
+            full_weights = np.zeros(self.n_assets)
+            
+            # Pesos dos ativos otimizados
+            for i, idx in enumerate(selected_indices):
+                full_weights[idx] = weights_to_optimize[i]
+            
+            # Pesos fixos dos shorts
+            for asset, weight in short_weights.items():
+                idx = self.assets.index(asset)
+                full_weights[idx] = weight
+            
+            # Calcular métricas com todos os pesos
+            metrics = self.calculate_portfolio_metrics(full_weights, risk_free_rate)
+            
+            if objective_type == 'sharpe':
+                return -metrics['sharpe_ratio']
+            elif objective_type == 'sortino':
+                return -metrics['sortino_ratio']
+            elif objective_type == 'volatility':
+                return metrics['volatility']
+            elif objective_type == 'slope':
+                return -metrics['slope']
+            elif objective_type == 'hc10':
+                if metrics['volatility'] > 0 and metrics['r_squared'] < 1:
+                    if metrics['slope'] > 0.000001:
+                        return (1 - metrics['r_squared']) * metrics['volatility'] / metrics['slope']
+                    elif metrics['slope'] < -0.000001:
+                        return 1e10 - metrics['slope']
+                    else:
+                        return 1e10
+                else:
+                    return 1e10
+            elif objective_type == 'quality_linear':
+                if not hasattr(self, 'risk_free_cumulative') or self.risk_free_cumulative is None:
+                    return 1e10
+                if metrics['volatility'] > 0 and metrics['r_squared'] > 0.001:
+                    quality_metric = (metrics['volatility'] * (1 - metrics['r_squared'])) / metrics['r_squared']
+                    return quality_metric
+                else:
+                    return 1e10
+            elif objective_type == 'excess_hc10':
+                if not hasattr(self, 'risk_free_cumulative') or self.risk_free_cumulative is None:
+                    return 1e10
+                if metrics.get('excess_slope') is not None:
+                    excess_returns_daily = metrics['portfolio_returns_daily'] - self.risk_free_returns.values
+                    excess_vol = np.std(excess_returns_daily, ddof=0) * np.sqrt(252)
+                    if metrics['excess_slope'] > 0.000001 and excess_vol > 0 and metrics['excess_r_squared'] < 1:
+                        return (1 - metrics['excess_r_squared']) * excess_vol / metrics['excess_slope']
+                    else:
+                        if metrics['excess_slope'] <= 0:
+                            return 1e10 + abs(metrics['excess_slope']) * 1e6
+                        else:
+                            return 1e10
+                else:
+                    return 1e10
+            elif objective_type == 'return':
+                return -metrics['annual_return']
+        
+        # Restrições - soma dos pesos LONG = 1
+        constraints = [
+            {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
+        ]
+        
+        # Limites para pesos long
+        if individual_constraints is not None:
+            # Usar limites individuais para ativos long
+            bounds = []
+            for asset in selected_assets:
+                if asset in individual_constraints:
+                    bounds.append((
+                        individual_constraints[asset]['min'],
+                        individual_constraints[asset]['max']
+                    ))
+                else:
+                    # Usar limites globais como fallback
+                    bounds.append((min_weight, max_weight))
+            bounds = tuple(bounds)
+        else:
+            # Usar limites globais para todos
+            bounds = tuple((min_weight, max_weight) for _ in range(n_optimize))
+        
+        # Chute inicial
+        initial_weights = np.array([1/n_optimize] * n_optimize)
+        
+        # Otimização
+        try:
+            result = minimize(
+                objective_function,
+                initial_weights,
+                method='SLSQP',
+                bounds=bounds,
+                constraints=constraints,
+                options={'maxiter': 1000, 'ftol': 1e-9}
+            )
+            
+            if result.success:
+                # Reconstruir pesos completos
+                full_weights = np.zeros(self.n_assets)
+                
+                # Pesos otimizados
+                for i, idx in enumerate(selected_indices):
+                    full_weights[idx] = result.x[i]
+                
+                # Pesos shorts
+                for asset, weight in short_weights.items():
+                    idx = self.assets.index(asset)
+                    full_weights[idx] = weight
+                
+                metrics = self.calculate_portfolio_metrics(full_weights, risk_free_rate)
+                
+                return {
+                    'success': True,
+                    'weights': full_weights,
                     'metrics': metrics,
                     'assets': self.assets
                 }
