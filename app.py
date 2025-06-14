@@ -9,12 +9,241 @@ from optimizer import PortfolioOptimizer
 st.set_page_config(
     page_title="Otimizador de Portfólio",
     page_icon="📊",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
+
+# CSS customizado para o botão de ajuda
+st.markdown("""
+<style>
+    .help-button {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        z-index: 999;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Inicializar session state para controle da ajuda
+if 'show_help' not in st.session_state:
+    st.session_state.show_help = False
+
+# Função para alternar ajuda
+def toggle_help():
+    st.session_state.show_help = not st.session_state.show_help
 
 # Título
 st.title("📊 Otimizador de Portfólio")
-st.markdown("*Baseado na metodologia de Markowitz*")
+col1, col2 = st.columns([6, 1])
+with col1:
+    st.markdown("*Baseado na metodologia de Markowitz*")
+with col2:
+    if st.button("📖 Ajuda", use_container_width=True, help="Clique para ver a documentação"):
+        toggle_help()
+
+# Mostrar documentação se solicitado
+if st.session_state.show_help:
+    with st.container():
+        st.markdown("---")
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["🚀 Início Rápido", "📊 Preparar Dados", "⚙️ Configurações", "📈 Resultados", "❓ FAQ"])
+        
+        with tab1:
+            st.markdown("""
+            ## 🚀 Guia de Início Rápido
+            
+            ### 3 Passos Simples:
+            
+            1. **📁 Carregue seus dados**
+               - Use o upload ou escolha um exemplo
+               - Formato: Excel com retornos diários
+            
+            2. **🎯 Configure a otimização**
+               - Selecione os ativos (mínimo 2)
+               - Escolha o objetivo (Sharpe, Sortino, etc.)
+               - Ajuste os limites de peso
+            
+            3. **🚀 Otimize!**
+               - Clique no botão "OTIMIZAR PORTFÓLIO"
+               - Analise os resultados
+               - Exporte ou ajuste conforme necessário
+            
+            ### 💡 Dica Rápida:
+            Para primeira vez, use os dados de exemplo e objetivo "Maximizar Sharpe Ratio"!
+            """)
+        
+        with tab2:
+            st.markdown("""
+            ## 📊 Como Preparar seus Dados
+            
+            ### Formato da Planilha Excel:
+            
+            | Data | Taxa Ref (opcional) | Ativo 1 | Ativo 2 | ... |
+            |------|---------------------|---------|---------|-----|
+            | 01/01/2023 | 0.0005 | 0.0120 | -0.0050 | ... |
+            | 02/01/2023 | 0.0005 | -0.0030 | 0.0100 | ... |
+            
+            ### ⚠️ Importante:
+            - **Coluna A**: Datas (formato data)
+            - **Coluna B**: Taxa referência - CDI, IBOV, etc. (opcional)
+            - **Outras colunas**: Retornos diários em decimal
+            - **Exemplo**: 1.2% = 0.012 (não use 1.2)
+            
+            ### 📁 Dados de Exemplo Disponíveis:
+            - **Ações Brasileiras**: IBOV, blue chips
+            - **Fundos Imobiliários**: FIIs principais
+            - **ETFs**: Renda fixa e variável
+            - **Criptomoedas**: Bitcoin, Ethereum, etc.
+            
+            ### 🔍 Dica de Qualidade:
+            - Mínimo 1 ano de dados (252 dias úteis)
+            - Evite períodos com muitos feriados
+            - Verifique dados faltantes ou zerados
+            """)
+        
+        with tab3:
+            st.markdown("""
+            ## ⚙️ Configurações Detalhadas
+            
+            ### 🎯 Objetivos de Otimização:
+            
+            | Objetivo | Quando Usar | Característica |
+            |----------|-------------|----------------|
+            | **Sharpe Ratio** | Carteiras tradicionais | Retorno/Risco total |
+            | **Sortino Ratio** | Aversão a perdas | Penaliza só volatilidade negativa |
+            | **Minimizar Risco** | Perfil conservador | Menor volatilidade possível |
+            | **Maximizar Inclinação** | Tendência de alta | Crescimento mais consistente |
+            | **Inclinação/[(1-R²)×Vol]** | Crescimento estável | Combina tendência e previsibilidade |
+            
+            ### 📊 Limites de Peso:
+            
+            - **Peso Mínimo Global (0-20%)**
+              - 0% = Permite excluir ativos
+              - 5% = Garante diversificação mínima
+              - 10%+ = Força distribuição equilibrada
+            
+            - **Peso Máximo Global (5-100%)**
+              - 20% = Máxima diversificação
+              - 30% = Balanceado (recomendado)
+              - 50%+ = Permite concentração
+            
+            ### 🎯 Restrições Individuais:
+            
+            Use para casos específicos:
+            - **Travar posição**: Min = Max (ex: 15% = 15%)
+            - **Core holding**: Min alto (ex: Min 20%)
+            - **Limitar risco**: Max baixo (ex: Max 5%)
+            
+            ### 🔄 Posições Short/Hedge:
+            
+            - Permite vender ativos a descoberto
+            - Útil para hedge ou arbitragem
+            - Pesos negativos até -100%
+            - Não entram na soma de 100%
+            """)
+        
+        with tab4:
+            st.markdown("""
+            ## 📈 Interpretando os Resultados
+            
+            ### 📊 Métricas Principais:
+            
+            | Métrica | O que significa | Valores de Referência |
+            |---------|-----------------|----------------------|
+            | **Retorno Total** | Ganho acumulado | Depende do período |
+            | **Retorno Anual** | Ganho anualizado | CDI + 2-5% = bom |
+            | **Volatilidade** | Risco anualizado | <10% = baixo, >20% = alto |
+            | **Sharpe Ratio** | Retorno/Risco | >1 = bom, >2 = ótimo |
+            | **Sortino Ratio** | Retorno/Risco negativo | Geralmente > Sharpe |
+            
+            ### 📉 Métricas de Risco:
+            
+            - **R²**: Previsibilidade (0-1)
+              - >0.8 = Alta linearidade
+              - <0.5 = Baixa previsibilidade
+            
+            - **VaR 95%**: Perda máxima diária
+              - -2% = Em 95% dos dias, não perde mais que 2%
+              
+            - **Downside Deviation**: Volatilidade das perdas
+              - Sempre ≤ Volatilidade total
+            
+            ### 📊 Composição Final:
+            
+            - Pesos otimizados somam 100%
+            - Ativos com peso <0.1% são omitidos
+            - Gráfico de pizza mostra distribuição visual
+            
+            ### 📈 Gráfico de Performance:
+            
+            - **Linha Azul**: Portfólio otimizado
+            - **Linha Laranja**: Taxa de referência (se houver)
+            - **Linha Verde**: Excesso de retorno
+            
+            ### 📅 Tabela Mensal:
+            
+            - Verde = Retorno positivo
+            - Vermelho = Retorno negativo
+            - Total Anual = Performance do ano
+            """)
+        
+        with tab5:
+            st.markdown("""
+            ## ❓ Perguntas Frequentes
+            
+            ### Por que meu ativo favorito ficou com 0%?
+            O otimizador busca a melhor combinação matemática. Ativos podem receber 0% se:
+            - Têm baixo retorno ajustado ao risco
+            - São muito correlacionados com outros
+            - Têm volatilidade muito alta
+            
+            **Solução**: Use restrições individuais para garantir alocação mínima.
+            
+            ### Sharpe ou Sortino - qual usar?
+            - **Sharpe**: Tradicional, penaliza toda volatilidade
+            - **Sortino**: Moderno, penaliza só volatilidade negativa
+            
+            **Recomendação**: Sortino é geralmente melhor para investidores reais.
+            
+            ### Quantos ativos incluir?
+            - **Mínimo**: 2 ativos (obrigatório)
+            - **Ideal**: 5-15 ativos
+            - **Máximo prático**: 20-30 ativos
+            
+            ### Como usar posições short?
+            1. Selecione ativos para otimização normal
+            2. Ative "Posições Short/Hedge"
+            3. Escolha ativos para vender
+            4. Defina pesos negativos
+            
+            ### A otimização é garantida?
+            **NÃO!** A otimização é baseada em dados históricos. Use como guia, considerando:
+            - Mudanças de cenário
+            - Custos de transação
+            - Liquidez dos ativos
+            - Seu perfil de risco
+            
+            ### Como exportar os resultados?
+            - Screenshot da tela
+            - Copie os valores da tabela
+            - Print do gráfico (botão de câmera no Plotly)
+            
+            ### Posso confiar 100% nos resultados?
+            Não. Esta é uma ferramenta de apoio à decisão. Sempre:
+            - Revise os resultados criticamente
+            - Considere fatores não quantitativos
+            - Consulte um profissional se necessário
+            
+            ### 📞 Suporte:
+            - GitHub: [github.com/psrs2000/Portfolio_Optimizer](https://github.com/psrs2000/Portfolio_Optimizer)
+            - Documentação completa no README.md
+            """)
+        
+        # Botão para fechar ajuda
+        st.markdown("---")
+        if st.button("❌ Fechar Ajuda", use_container_width=False):
+            toggle_help()
+            st.rerun()
 
 # Configuração dos dados de exemplo no GitHub
 # IMPORTANTE: Substitua pelos seus valores reais!
@@ -242,7 +471,7 @@ if df is not None:
                 st.info(f"📊 Taxa de referência detectada: '{risk_free_column_name}'")
         
         # Seleção de ativos
-        st.header("🎯 Seleção de Ativos")
+        st.header("🛒 Seleção de Ativos")
         
         # Identificar colunas de ativos
         if isinstance(df.columns[0], str) and 'data' in df.columns[0].lower():
@@ -275,15 +504,61 @@ if df is not None:
             for i, asset in enumerate(selected_assets, 1):
                 st.text(f"{i}. {asset}")
         
+        # NOVA SEÇÃO: Short Selling / Hedge
+        st.header("🔄 Posições Short / Hedge (Opcional)")
+        
+        use_short = st.checkbox("Habilitar posições short/hedge", help="Permite incluir ativos com pesos negativos (venda a descoberto)")
+        
+        short_assets = []
+        short_weights = {}
+        
+        if use_short:
+            # Identificar ativos não selecionados
+            available_for_short = [asset for asset in asset_columns if asset not in selected_assets]
+            
+            if len(available_for_short) > 0:
+                col1, col2 = st.columns([2, 1])
+                
+                with col1:
+                    short_assets = st.multiselect(
+                        "Selecione ativos para posição short:",
+                        options=available_for_short,
+                        help="Estes ativos terão pesos negativos (venda a descoberto)"
+                    )
+                
+                if len(short_assets) > 0:
+                    st.markdown("**Defina os pesos negativos:**")
+                    
+                    # Criar sliders para cada ativo short
+                    cols = st.columns(min(3, len(short_assets)))
+                    for idx, asset in enumerate(short_assets):
+                        with cols[idx % 3]:
+                            weight = st.slider(
+                                f"{asset}",
+                                min_value=-100,
+                                max_value=0,
+                                value=-10,
+                                step=1,
+                                help=f"Peso negativo para {asset} (%). -100% = venda total do ativo"
+                            )
+                            short_weights[asset] = weight / 100
+                    
+                    # Mostrar resumo
+                    total_short = sum(short_weights.values())
+                    st.info(f"📊 Total short: {total_short*100:.1f}% (não entra na soma dos 100% do portfólio)")
+            else:
+                st.warning("⚠️ Selecione menos ativos na otimização para liberar opções de short")
+        
         # Configurações de otimização
         st.header("⚙️ Configurações da Otimização")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             # Lista de objetivos com condicional
             objectives_list = [
                 "Maximizar Sharpe Ratio", 
+                "Maximizar Sortino Ratio",
                 "Minimizar Risco", 
                 "Maximizar Inclinação", 
                 "Maximizar Inclinação/[(1-R²)×Vol]"
@@ -291,15 +566,26 @@ if df is not None:
             
             # Adicionar objetivo de excesso apenas se taxa livre foi detectada
             if has_risk_free:
-                objectives_list.append("🆕 Maximizar Linearidade do Excesso")
+                objectives_list.append("Maximizar Qualidade da Linearidade")
+                objectives_list.append("Maximizar Linearidade do Excesso")
                 
             objective = st.selectbox(
                 "🎯 Objetivo da Otimização",
                 objectives_list,
-                help="Escolha o que você quer otimizar. NOVO: Linearidade do Excesso disponível quando taxa livre é detectada!"
+                help="Escolha o que você quer otimizar. NOVO: Sortino Ratio considera apenas volatilidade negativa!"
             )
         
         with col2:
+            min_weight = st.slider(
+                "📊 Peso mínimo por ativo (%)",
+                min_value=0,
+                max_value=20,
+                value=0,
+                step=1,
+                help="Limite mínimo para cada ativo no portfólio (0% = sem mínimo)"
+            ) / 100
+        
+        with col3:
             max_weight = st.slider(
                 "📊 Peso máximo por ativo (%)",
                 min_value=5,
@@ -309,7 +595,7 @@ if df is not None:
                 help="Limite máximo para cada ativo no portfólio"
             ) / 100
         
-        with col3:
+        with col4:
             # Inicializar otimizador para verificar taxa livre
             temp_optimizer = PortfolioOptimizer(df, [])
             
@@ -332,6 +618,102 @@ if df is not None:
                     step=0.1,
                     help="Taxa de referência ACUMULADA do período"
                 ) / 100
+                
+        # NOVA SEÇÃO: Restrições Individuais (APÓS definir min_weight e max_weight)
+        use_individual_constraints = False
+        individual_constraints = {}
+        
+        if len(selected_assets) >= 2:
+            st.header("🚫 Restrições Individuais por Ativo (Opcional)")
+            
+            use_individual_constraints = st.checkbox(
+                "Definir limites específicos para alguns ativos",
+                help="Permite definir pesos mínimos e máximos diferentes para ativos específicos"
+            )
+            
+            if use_individual_constraints:
+                # Selecionar quais ativos terão restrições individuais
+                constrained_assets = st.multiselect(
+                    "Selecione os ativos com restrições específicas:",
+                    options=selected_assets,
+                    help="Escolha apenas os ativos que precisam de limites diferentes dos globais"
+                )
+                
+                if len(constrained_assets) > 0:
+                    st.markdown("**Configure os limites para cada ativo selecionado:**")
+                    
+                    # Criar colunas para organizar melhor
+                    num_cols = min(2, len(constrained_assets))
+                    if num_cols > 0:
+                        cols = st.columns(num_cols)
+                    
+                    for idx, asset in enumerate(constrained_assets):
+                        with cols[idx % num_cols] if num_cols > 0 else st.container():
+                            st.markdown(f"**{asset}**")
+                            
+                            # Valores padrão baseados nos limites globais
+                            default_min = min_weight * 100
+                            default_max = max_weight * 100
+                            
+                            # Criar duas colunas para min e max lado a lado
+                            col_min, col_max = st.columns(2)
+                            
+                            with col_min:
+                                asset_min = st.number_input(
+                                    "Mín %",
+                                    min_value=0.0,
+                                    max_value=100.0,
+                                    value=default_min,
+                                    step=0.5,
+                                    key=f"min_{asset}",
+                                    help=f"Peso mínimo para {asset}"
+                                )
+                            
+                            with col_max:
+                                asset_max = st.number_input(
+                                    "Máx %",
+                                    min_value=0.0,
+                                    max_value=100.0,
+                                    value=default_max,
+                                    step=0.5,
+                                    key=f"max_{asset}",
+                                    help=f"Peso máximo para {asset}"
+                                )
+                            
+                            # Validar que min <= max
+                            if asset_min > asset_max:
+                                st.error(f"⚠️ Mínimo deve ser ≤ Máximo")
+                                asset_min = asset_max
+                            
+                            # Guardar apenas os ativos com restrições
+                            individual_constraints[asset] = {
+                                'min': asset_min / 100,
+                                'max': asset_max / 100
+                            }
+                            
+                            # Mostrar range visualmente
+                            if asset_min == asset_max:
+                                st.info(f"🔒 Travado em {asset_min:.1f}%")
+                            else:
+                                st.caption(f"📊 Range: {asset_min:.1f}% - {asset_max:.1f}%")
+                            st.markdown("---")
+                    
+                    # Validar se a soma dos mínimos não excede 100%
+                    # Considerar TODOS os ativos: com restrições individuais + sem restrições (usando min global)
+                    total_min = 0
+                    for asset in selected_assets:
+                        if asset in individual_constraints:
+                            total_min += individual_constraints[asset]['min']
+                        else:
+                            total_min += min_weight
+                    
+                    if total_min > 1.0:
+                        st.error(f"❌ Soma dos mínimos ({total_min*100:.1f}%) excede 100%!")
+                        st.caption("Isso inclui os ativos sem restrições individuais usando o mínimo global")
+                    else:
+                        st.success(f"✅ Soma total dos mínimos: {total_min*100:.1f}%")
+                else:
+                    st.info("👆 Selecione os ativos que precisam de limites específicos")
 # Botão de otimização
         if st.button("🚀 OTIMIZAR PORTFÓLIO", type="primary", use_container_width=True):
             
@@ -341,8 +723,13 @@ if df is not None:
             else:
                 with st.spinner("🔄 Otimizando... Aguarde alguns segundos"):
                     try:
-                        # Inicializar otimizador com ativos selecionados
-                        optimizer = PortfolioOptimizer(df, selected_assets)
+                        # Preparar lista completa de ativos (selected + short)
+                        all_assets = selected_assets.copy()
+                        if use_short and len(short_assets) > 0:
+                            all_assets.extend(short_assets)
+                        
+                        # Inicializar otimizador com TODOS os ativos
+                        optimizer = PortfolioOptimizer(df, all_assets)
                         
                         # Usar taxa livre detectada ou manual
                         if has_risk_free and hasattr(optimizer, 'risk_free_rate_total'):
@@ -353,22 +740,45 @@ if df is not None:
                         # Definir tipo de objetivo
                         if objective == "Maximizar Sharpe Ratio":
                             obj_type = 'sharpe'
+                        elif objective == "Maximizar Sortino Ratio":
+                            obj_type = 'sortino'
                         elif objective == "Minimizar Risco":
                             obj_type = 'volatility'
                         elif objective == "Maximizar Inclinação":
                             obj_type = 'slope'
                         elif objective == "Maximizar Inclinação/[(1-R²)×Vol]":
                             obj_type = 'hc10'
-                        elif objective == "🆕 Maximizar Linearidade do Excesso":
-                            obj_type = 'excess_hc10'
+                        elif objective == "Maximizar Qualidade da Linearidade":
+                            obj_type = 'quality_linear'
+                        elif objective == "Maximizar Linearidade do Excesso":
+                            obj_type = 'excess_hc10'    
+                        
+                        # Preparar restrições individuais se habilitadas
+                        constraints_to_use = individual_constraints if use_individual_constraints else None
                         
                         # Executar otimização
-                        result = optimizer.optimize_portfolio(
-                            objective_type=obj_type,
-                            target_return=None,
-                            max_weight=max_weight,
-                            risk_free_rate=final_risk_free_rate
-                        )
+                        if use_short and len(short_assets) > 0:
+                            # Otimização com shorts
+                            result = optimizer.optimize_portfolio_with_shorts(
+                                selected_assets=selected_assets,
+                                short_assets=short_assets,
+                                short_weights=short_weights,
+                                objective_type=obj_type,
+                                max_weight=max_weight,
+                                min_weight=min_weight,
+                                risk_free_rate=final_risk_free_rate,
+                                individual_constraints=constraints_to_use
+                            )
+                        else:
+                            # Otimização normal
+                            result = optimizer.optimize_portfolio(
+                                objective_type=obj_type,
+                                target_return=None,
+                                max_weight=max_weight,
+                                min_weight=min_weight,
+                                risk_free_rate=final_risk_free_rate,
+                                individual_constraints=constraints_to_use
+                            )
                         
                         if result['success']:
                             st.success("🎉 Otimização concluída com sucesso!")
@@ -409,32 +819,45 @@ if df is not None:
                             
                             with col5:
                                 st.metric(
-                                    "📈 R²", 
-                                    f"{metrics['r_squared']:.3f}",
-                                    help="Qualidade da linearidade da tendência"
+                                    "🔥 Sortino Ratio", 
+                                    f"{metrics['sortino_ratio']:.3f}",
+                                    help="Similar ao Sharpe, mas considera apenas volatilidade negativa (downside risk)"
                                 )
                             
                             
                             # Segunda linha - Métricas de risco e taxa de referência
                             st.subheader("📊 Métricas de Risco e Taxa de referência")
-                            col1, col2, col3, col4 = st.columns(4)
+                            col1, col2, col3, col4, col5 = st.columns(5)
                             
                             with col1:
+                                st.metric(
+                                    "📈 R²", 
+                                    f"{metrics['r_squared']:.3f}",
+                                    help="Qualidade da linearidade da tendência"
+                                )
+                            
+                            with col2:
                                 st.metric(
                                     "⚠️ VaR 95% (Diário)", 
                                     f"{metrics['var_95_daily']:.2%}",
                                     help="Perda máxima esperada em 95% dos dias"
                                 )
                             
+                            with col3:
+                                st.metric(
+                                    "📉 Downside Deviation", 
+                                    f"{metrics['downside_deviation']:.2%}",
+                                    help="Volatilidade anualizada apenas dos retornos negativos"
+                                )
                             
-                            with col2:
+                            with col4:
                                 st.metric(
                                     "🏛️ Taxa de referência", 
                                     f"{metrics['risk_free_rate']:.2%}",
                                     help="Taxa de referência acumulada do período usada no cálculo"
                                 )
                             
-                            with col3:
+                            with col5:
                                 st.metric(
                                     "📈 Retorno do Excesso", 
                                     f"{metrics['excess_return']:.2%}",
@@ -442,7 +865,7 @@ if df is not None:
                                 )
                             
                             # NOVO: Se otimizou excesso, mostrar métricas específicas
-                            if objective == "🆕 Maximizar Linearidade do Excesso" and metrics.get('excess_r_squared') is not None:
+                            if objective == "Maximizar Linearidade do Excesso" and metrics.get('excess_r_squared') is not None:
                                 st.subheader("🆕 Métricas de Linearidade do Excesso")
                                 col1, col2, col3, col4 = st.columns(4)  # Era 3, agora é 4
                                 
@@ -498,7 +921,9 @@ if df is not None:
                                 f"Ex: VaR 95% = {metrics['var_95_daily']:.2%} significa que "
                                 f"em 95% dos dias você não perderá mais que {abs(metrics['var_95_daily']):.2%}\n\n"
                                 "🏛️ **Taxa Livre de Risco**: Representa o retorno de um investimento sem risco (ex: CDI, Tesouro). "
-                                "O Sharpe Ratio mede quanto retorno extra você obtém por unidade de risco adicional."
+                                "O Sharpe Ratio mede quanto retorno extra você obtém por unidade de risco adicional.\n\n"
+                                "🔥 **Sortino Ratio**: Similar ao Sharpe, mas considera apenas a volatilidade dos retornos negativos. "
+                                "É mais apropriado pois investidores se preocupam mais com perdas do que com ganhos voláteis."
                             )
                             
                             # Composição do portfólio
@@ -566,7 +991,7 @@ if df is not None:
                                     x=list(periods),
                                     y=optimizer.risk_free_cumulative * 100,
                                     mode='lines',
-                                    name='Taxa Livre de Risco',
+                                    name='Taxa de Referência',
                                     line=dict(color='#ff7f0e', width=2, dash='dash')
                                 ))
                                 
