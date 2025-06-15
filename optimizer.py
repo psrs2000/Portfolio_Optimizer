@@ -126,6 +126,24 @@ class PortfolioOptimizer:
         var_95_annual = mean_daily_return * 252 - 1.65 * std_daily_return * np.sqrt(252)
         var_99_annual = mean_daily_return * 252 - 2.33 * std_daily_return * np.sqrt(252)
         
+        # CVaR (Conditional Value at Risk) - Método Histórico
+        # CVaR = média dos retornos abaixo do VaR
+        sorted_returns = np.sort(portfolio_returns_daily)
+        
+        # Para 95% de confiança, pegamos os 5% piores retornos
+        n_worst_5pct = max(1, int(0.05 * len(portfolio_returns_daily)))
+        worst_returns_5pct = sorted_returns[:n_worst_5pct]
+        cvar_95_daily = np.mean(worst_returns_5pct)
+        
+        # Para 99% de confiança, pegamos o 1% pior
+        n_worst_1pct = max(1, int(0.01 * len(portfolio_returns_daily)))
+        worst_returns_1pct = sorted_returns[:n_worst_1pct]
+        cvar_99_daily = np.mean(worst_returns_1pct)
+        
+        # CVaR anualizado (aproximação)
+        cvar_95_annual = cvar_95_daily * 252
+        cvar_99_annual = cvar_99_daily * 252
+        
         # HC10: Métrica de qualidade da tendência
         try:
             from scipy import stats
@@ -194,6 +212,10 @@ class PortfolioOptimizer:
             'var_99_daily': var_99_daily,
             'var_95_annual': var_95_annual,
             'var_99_annual': var_99_annual,
+            'cvar_95_daily': cvar_95_daily,
+            'cvar_99_daily': cvar_99_daily,
+            'cvar_95_annual': cvar_95_annual,
+            'cvar_99_annual': cvar_99_annual,
             # Novas métricas do excesso
             'excess_slope': excess_slope,
             'excess_r_squared': excess_r_squared,
