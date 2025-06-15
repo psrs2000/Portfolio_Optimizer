@@ -471,7 +471,7 @@ if df is not None:
                 st.info(f"📊 Taxa de referência detectada: '{risk_free_column_name}'")
         
         # Seleção de ativos
-        st.header("🛒 Seleção de Ativos")
+        st.header("🎯 Seleção de Ativos")
         
         # Identificar colunas de ativos
         if isinstance(df.columns[0], str) and 'data' in df.columns[0].lower():
@@ -566,7 +566,7 @@ if df is not None:
             
             # Adicionar objetivo de excesso apenas se taxa livre foi detectada
             if has_risk_free:
-                objectives_list.append("Maximizar Qualidade da Linearidade")
+                objectives_list.append("🎯 Maximizar Qualidade da Linearidade")
                 objectives_list.append("Maximizar Linearidade do Excesso")
                 
             objective = st.selectbox(
@@ -624,7 +624,7 @@ if df is not None:
         individual_constraints = {}
         
         if len(selected_assets) >= 2:
-            st.header("🚫 Restrições Individuais por Ativo (Opcional)")
+            st.header("🎯 Restrições Individuais por Ativo (Opcional)")
             
             use_individual_constraints = st.checkbox(
                 "Definir limites específicos para alguns ativos",
@@ -748,7 +748,7 @@ if df is not None:
                             obj_type = 'slope'
                         elif objective == "Maximizar Inclinação/[(1-R²)×Vol]":
                             obj_type = 'hc10'
-                        elif objective == "Maximizar Qualidade da Linearidade":
+                        elif objective == "🎯 Maximizar Qualidade da Linearidade":
                             obj_type = 'quality_linear'
                         elif objective == "Maximizar Linearidade do Excesso":
                             obj_type = 'excess_hc10'    
@@ -827,7 +827,7 @@ if df is not None:
                             
                             # Segunda linha - Métricas de risco e taxa de referência
                             st.subheader("📊 Métricas de Risco e Taxa de referência")
-                            col1, col2, col3, col4, col5 = st.columns(5)
+                            col1, col2, col3, col4, col5, col6 = st.columns(6)
                             
                             with col1:
                                 st.metric(
@@ -845,19 +845,26 @@ if df is not None:
                             
                             with col3:
                                 st.metric(
+                                    "📉 CVaR 95% (Diário)", 
+                                    f"{metrics['cvar_95_daily']:.2%}",
+                                    help="Perda média nos 5% piores dias"
+                                )
+                            
+                            with col4:
+                                st.metric(
                                     "📉 Downside Deviation", 
                                     f"{metrics['downside_deviation']:.2%}",
                                     help="Volatilidade anualizada apenas dos retornos negativos"
                                 )
                             
-                            with col4:
+                            with col5:
                                 st.metric(
                                     "🏛️ Taxa de referência", 
                                     f"{metrics['risk_free_rate']:.2%}",
                                     help="Taxa de referência acumulada do período usada no cálculo"
                                 )
                             
-                            with col5:
+                            with col6:
                                 st.metric(
                                     "📈 Retorno do Excesso", 
                                     f"{metrics['excess_return']:.2%}",
@@ -917,9 +924,9 @@ if df is not None:
                             
                             # Explicação sobre VaR e Taxa Livre de Risco
                             st.info(
-                                "💡 **VaR**: Mostra a perda máxima esperada. "
-                                f"Ex: VaR 95% = {metrics['var_95_daily']:.2%} significa que "
-                                f"em 95% dos dias você não perderá mais que {abs(metrics['var_95_daily']):.2%}\n\n"
+                                "💡 **VaR vs CVaR**: \n"
+                                f"• VaR 95% = {metrics['var_95_daily']:.2%}: Em 95% dos dias você não perderá mais que {abs(metrics['var_95_daily']):.2%}\n"
+                                f"• CVaR 95% = {metrics['cvar_95_daily']:.2%}: Nos 5% piores dias, perderá em média {abs(metrics['cvar_95_daily']):.2%}\n\n"
                                 "🏛️ **Taxa Livre de Risco**: Representa o retorno de um investimento sem risco (ex: CDI, Tesouro). "
                                 "O Sharpe Ratio mede quanto retorno extra você obtém por unidade de risco adicional.\n\n"
                                 "🔥 **Sortino Ratio**: Similar ao Sharpe, mas considera apenas a volatilidade dos retornos negativos. "
