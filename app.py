@@ -471,7 +471,7 @@ if df is not None:
                 st.info(f"📊 Taxa de referência detectada: '{risk_free_column_name}'")
         
         # Seleção de ativos
-        st.header("🎯 Seleção de Ativos")
+        st.header("🛒 Seleção de Ativos")
         
         # Identificar colunas de ativos
         if isinstance(df.columns[0], str) and 'data' in df.columns[0].lower():
@@ -566,7 +566,7 @@ if df is not None:
             
             # Adicionar objetivo de excesso apenas se taxa livre foi detectada
             if has_risk_free:
-                objectives_list.append("🎯 Maximizar Qualidade da Linearidade")
+                objectives_list.append("Maximizar Qualidade da Linearidade")
                 objectives_list.append("Maximizar Linearidade do Excesso")
                 
             objective = st.selectbox(
@@ -624,7 +624,7 @@ if df is not None:
         individual_constraints = {}
         
         if len(selected_assets) >= 2:
-            st.header("🎯 Restrições Individuais por Ativo (Opcional)")
+            st.header("🚫 Restrições Individuais por Ativo (Opcional)")
             
             use_individual_constraints = st.checkbox(
                 "Definir limites específicos para alguns ativos",
@@ -748,7 +748,7 @@ if df is not None:
                             obj_type = 'slope'
                         elif objective == "Maximizar Inclinação/[(1-R²)×Vol]":
                             obj_type = 'hc10'
-                        elif objective == "🎯 Maximizar Qualidade da Linearidade":
+                        elif objective == "Maximizar Qualidade da Linearidade":
                             obj_type = 'quality_linear'
                         elif objective == "Maximizar Linearidade do Excesso":
                             obj_type = 'excess_hc10'    
