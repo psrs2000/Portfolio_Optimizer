@@ -122,8 +122,8 @@ ________________________________________
 
 •	Busca crescimento estável e previsível
 
-6. 🎯 Maximizar Qualidade da Linearidade (requer taxa de referência)
-
+6. Maximizar Qualidade da Linearidade
+7. 
 •	Minimiza [Vol × (1-R²)]/R²
 
 •	Busca máxima previsibilidade
