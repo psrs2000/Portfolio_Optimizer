@@ -4,6 +4,8 @@
 
 O Otimizador de Portfólio é uma ferramenta profissional baseada na Teoria Moderna de Portfólios de Harry Markowitz. Permite otimizar a alocação de investimentos maximizando retornos ajustados ao risco.
 
+Link para a ferramenta: https://otimizador-portfolio.streamlit.app/
+
 ✨ Principais Funcionalidades
 
 •	Múltiplos objetivos de otimização (Sharpe, Sortino, Mínimo Risco, etc.)
