@@ -538,14 +538,48 @@ class PortfolioOptimizer:
     
     def get_portfolio_summary(self, weights):
         """
-        Cria resumo do portfólio otimizado
+        Cria resumo do portfólio otimizado com pesos iniciais e atuais
+        Posições LONG e SHORT usam a mesma fórmula, mas patrimônio total considera apenas LONGs
         """
-        # Filtrar apenas pesos significativos (> 0.1%)
-        significant_weights = weights > 0.001
+        # Calcular valores finais de cada ativo (LONG e SHORT usam mesma fórmula)
+        asset_final_values = []
+        
+        for i, asset in enumerate(self.assets):
+            if abs(weights[i]) > 0.001:  # Ativos significativos (positivos OU negativos)
+                # Retorno acumulado do ativo individual
+                asset_returns = self.returns_data[asset].values
+                asset_cumulative_return = np.sum(asset_returns)  # Retorno total acumulado
+                
+                # MESMA FÓRMULA para LONG e SHORT
+                asset_final_value = weights[i] * (1 + asset_cumulative_return)
+                asset_final_values.append(asset_final_value)
+            else:
+                asset_final_values.append(0)
+        
+        # PATRIMÔNIO TOTAL = apenas soma das posições LONG (positivas)
+        long_portfolio_value = sum([val for i, val in enumerate(asset_final_values) if weights[i] > 0])
+        
+        # Calcular novos pesos
+        asset_current_weights = []
+        for i, asset in enumerate(self.assets):
+            if abs(weights[i]) > 0.001:
+                if weights[i] > 0:  # Posição LONG
+                    current_weight = asset_final_values[i] / long_portfolio_value if long_portfolio_value > 0 else 0
+                else:  # Posição SHORT
+                    current_weight = asset_final_values[i] / long_portfolio_value if long_portfolio_value > 0 else 0
+                
+                asset_current_weights.append(current_weight)
+            else:
+                asset_current_weights.append(0)
+        
+        # Filtrar ativos significativos para a tabela
+        significant_weights = np.abs(weights) > 0.001
         
         portfolio_df = pd.DataFrame({
             'Ativo': np.array(self.assets)[significant_weights],
-            'Peso (%)': weights[significant_weights] * 100
-        }).sort_values('Peso (%)', ascending=False)
+            'Peso Inicial (%)': weights[significant_weights] * 100,
+            'Peso Atual (%)': np.array(asset_current_weights)[significant_weights] * 100,
+            'Tipo': ['SHORT' if w < 0 else 'LONG' for w in weights[significant_weights]]
+        }).sort_values('Peso Inicial (%)', key=abs, ascending=False)
         
         return portfolio_df
