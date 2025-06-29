@@ -292,37 +292,52 @@ def load_from_github(filename):
 def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_returns=None):
     """
     Cria tabela de retornos mensais do portfólio otimizado
+    MÉTODO CORRIGIDO: Via patrimônio acumulado
     """
     # Calcular retornos diários do portfólio
     portfolio_returns_daily = np.dot(returns_data.values, weights)
     
-    # Criar DataFrame com retornos diários
-    portfolio_df = pd.DataFrame({
-        'returns': portfolio_returns_daily
-    }, index=range(len(portfolio_returns_daily)))
-    
-    # Adicionar taxa livre se disponível
-    if risk_free_returns is not None:
-        portfolio_df['risk_free'] = risk_free_returns.values
+    # Calcular patrimônio acumulado (base 1)
+    portfolio_cumulative = np.cumsum(portfolio_returns_daily)
+    portfolio_patrimonio = 1 + portfolio_cumulative
     
     # Usar datas reais se disponíveis, senão simular
     if dates is not None:
-        portfolio_df.index = dates
+        portfolio_df = pd.DataFrame({
+            'patrimonio': portfolio_patrimonio
+        }, index=dates)
     else:
         # Simular datas (assumindo dados diários consecutivos)
         start_date = pd.Timestamp('2020-01-01')
-        dates = pd.date_range(start=start_date, periods=len(portfolio_returns_daily), freq='D')
-        portfolio_df.index = dates
+        dates = pd.date_range(start=start_date, periods=len(portfolio_patrimonio), freq='D')
+        portfolio_df = pd.DataFrame({
+            'patrimonio': portfolio_patrimonio
+        }, index=dates)
     
-    # Calcular retornos mensais
-    # Converter retornos diários para retornos compostos mensais
-    portfolio_df['returns_factor'] = 1 + portfolio_df['returns']
-    monthly_returns = portfolio_df['returns_factor'].resample('M').prod() - 1
+    # MÉTODO 1: Patrimônio final de cada mês
+    monthly_patrimonio = portfolio_df['patrimonio'].resample('M').last()
     
-    # Calcular retornos mensais da taxa livre se disponível
+    # Calcular retornos mensais via pct_change
+    monthly_returns = monthly_patrimonio.pct_change().fillna(monthly_patrimonio.iloc[0] - 1)
+    
+    # Processar taxa livre de risco se disponível
+    monthly_risk_free = None
     if risk_free_returns is not None:
-        portfolio_df['risk_free_factor'] = 1 + portfolio_df['risk_free']
-        monthly_risk_free = portfolio_df['risk_free_factor'].resample('M').prod() - 1
+        # Mesmo processo para taxa livre
+        risk_free_cumulative = np.cumsum(risk_free_returns.values)
+        risk_free_patrimonio = 1 + risk_free_cumulative
+        
+        if dates is not None:
+            risk_free_df = pd.DataFrame({
+                'patrimonio': risk_free_patrimonio
+            }, index=dates)
+        else:
+            risk_free_df = pd.DataFrame({
+                'patrimonio': risk_free_patrimonio
+            }, index=dates)
+        
+        monthly_rf_patrimonio = risk_free_df['patrimonio'].resample('M').last()
+        monthly_risk_free = monthly_rf_patrimonio.pct_change().fillna(monthly_rf_patrimonio.iloc[0] - 1)
     
     # Criar tabela pivotada (anos x meses)
     monthly_df = pd.DataFrame({
@@ -341,12 +356,12 @@ def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_re
     }
     pivot_table.columns = [month_names.get(col, f'M{col}') for col in pivot_table.columns]
     
-    # Calcular total anual (soma dos retornos mensais compostos)
+    # Calcular total anual CORRIGIDO
     yearly_returns = []
     for year in pivot_table.index:
         year_data = pivot_table.loc[year].dropna()
         if len(year_data) > 0:
-            # Retorno anual composto
+            # Retorno anual composto: (1 + jan) × (1 + fev) × ... - 1
             annual_return = (1 + year_data).prod() - 1
             yearly_returns.append(annual_return)
         else:
@@ -356,7 +371,7 @@ def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_re
     
     # Se temos taxa livre, criar tabela comparativa
     comparison_table = None
-    if risk_free_returns is not None:
+    if monthly_risk_free is not None:
         # Criar tabela similar para taxa livre
         rf_monthly_df = pd.DataFrame({
             'Year': monthly_risk_free.index.year,
@@ -484,11 +499,11 @@ if df is not None:
         
         st.markdown("Selecione os ativos que deseja incluir na otimização:")
         
-        # Opção com multiselect - NENHUM selecionado por padrão
+        # Opção com multiselect - Todos ativos selecionados por padrão
         selected_assets = st.multiselect(
             "🔍 Digite para buscar ou clique para selecionar:",
             options=asset_columns,
-            default=[],
+            default=asset_columns,  #  AGORA SELECIONA TODOS
             help="Você pode digitar parte do nome para filtrar os ativos",
             placeholder="Escolha os ativos..."
         )
@@ -935,31 +950,49 @@ if df is not None:
                             
                             # Composição do portfólio
                             st.header("📊 Composição do Portfólio Otimizado")
-                            
+
                             portfolio_df = optimizer.get_portfolio_summary(result['weights'])
-                            
+
                             col1, col2 = st.columns([1, 1])
-                            
+
                             with col1:
                                 st.subheader("📋 Tabela de Pesos")
-                                # Formatar tabela
+                                # Formatar tabela com duas colunas de pesos
                                 portfolio_display = portfolio_df.copy()
-                                portfolio_display['Peso (%)'] = portfolio_display['Peso (%)'].apply(lambda x: f"{x:.2f}%")
+                                portfolio_display['Peso Inicial (%)'] = portfolio_display['Peso Inicial (%)'].apply(lambda x: f"{x:.2f}%")
+                                portfolio_display['Peso Atual (%)'] = portfolio_display['Peso Atual (%)'].apply(lambda x: f"{x:.2f}%")
+                                
                                 st.dataframe(portfolio_display, use_container_width=True, hide_index=True)
                                 
-                                # Total para verificação
-                                total_weight = portfolio_df['Peso (%)'].sum()
-                                st.info(f"✅ Total alocado: {total_weight:.1f}%")
-                            
+                                # Mostrar totais para verificação
+                                total_initial = portfolio_df['Peso Inicial (%)'].sum()
+                                total_current = portfolio_df['Peso Atual (%)'].sum()
+                                
+                                # Criar duas colunas para os totais
+                                col_total1, col_total2 = st.columns(2)
+                                with col_total1:
+                                    st.info(f"✅ Total inicial: {total_initial:.1f}%")
+                                with col_total2:
+                                    st.info(f"🔄 Total atual: {total_current:.1f}%")
+                                
+                                # Explicação sobre os pesos
+                                st.markdown("""
+                                **💡 Interpretação:**
+                                - **Peso Inicial**: Alocação recomendada pela otimização
+                                - **Peso Atual**: Alocação real após evolução dos preços
+                                - A diferença mostra como o mercado "rebalanceou" naturalmente o portfólio
+                                """)
+
                             with col2:
-                                st.subheader("🥧 Distribuição Visual")
+                                st.subheader("🥧 Distribuição Atual")
                                 if len(portfolio_df) > 0:
                                     fig = px.pie(
                                         portfolio_df,
-                                        values='Peso (%)',
+                                        values='Peso Atual (%)',
                                         names='Ativo',
                                         hole=0.4,
-                                        color_discrete_sequence=px.colors.qualitative.Set3
+                                        color_discrete_sequence=px.colors.qualitative.Set3,
+                                        title="Pesos Após Evolução dos Preços"
                                     )
                                     fig.update_traces(
                                         textposition='inside', 
@@ -1051,9 +1084,9 @@ if df is not None:
                             
                             st.plotly_chart(fig_line, use_container_width=True)
                             
-                            # NOVA SEÇÃO: Tabela de Retornos Mensais
-                            st.header("📅 Performance Mensal do Portfólio")
-                            
+                            # NOVA SEÇÃO: Tabela de Retornos Mensais - VERSÃO VERTICAL
+                            st.header("📅 Performance Mensal Comparativa")
+
                             try:
                                 # Criar tabela de retornos mensais
                                 dates = getattr(optimizer, 'dates', None)
@@ -1090,8 +1123,8 @@ if df is not None:
                                     except:
                                         return 'color: black'
                                 
-                                # Mostrar tabela principal
-                                st.subheader("📊 Retornos Mensais do Portfólio")
+                                # 1. TABELA DO PORTFÓLIO
+                                st.subheader("📊 Retornos Mensais do Portfólio Otimizado")
                                 monthly_display = monthly_table.copy()
                                 
                                 # Aplicar formatação de porcentagem
@@ -1110,9 +1143,83 @@ if df is not None:
                                     height=300
                                 )
                                 
-                                # Se temos tabela de excesso, mostrar também
+                                # 2. TABELA DA TAXA DE REFERÊNCIA (se disponível)
                                 if excess_table is not None:
-                                    st.subheader("📊 Excesso de Retorno Mensal (Portfólio - Taxa de Referência)")
+                                    # Recalcular a tabela da taxa de referência
+                                    # (Precisa refazer porque a função só retorna monthly_table e excess_table)
+                                    
+                                    # Calcular novamente para obter rf_pivot
+                                    if risk_free_returns is not None:
+                                        # Mesmo processo da função create_monthly_returns_table
+                                        risk_free_cumulative = np.cumsum(risk_free_returns.values)
+                                        risk_free_patrimonio = 1 + risk_free_cumulative
+                                        
+                                        if dates is not None:
+                                            risk_free_df = pd.DataFrame({
+                                                'patrimonio': risk_free_patrimonio
+                                            }, index=dates)
+                                        else:
+                                            start_date = pd.Timestamp('2020-01-01')
+                                            sim_dates = pd.date_range(start=start_date, periods=len(risk_free_patrimonio), freq='D')
+                                            risk_free_df = pd.DataFrame({
+                                                'patrimonio': risk_free_patrimonio
+                                            }, index=sim_dates)
+                                        
+                                        monthly_rf_patrimonio = risk_free_df['patrimonio'].resample('M').last()
+                                        monthly_risk_free = monthly_rf_patrimonio.pct_change().fillna(monthly_rf_patrimonio.iloc[0] - 1)
+                                        
+                                        # Criar tabela pivotada para taxa livre
+                                        rf_monthly_df = pd.DataFrame({
+                                            'Year': monthly_risk_free.index.year,
+                                            'Month': monthly_risk_free.index.month,
+                                            'Return': monthly_risk_free.values
+                                        })
+                                        
+                                        rf_pivot = rf_monthly_df.pivot(index='Year', columns='Month', values='Return')
+                                        
+                                        # Renomear colunas
+                                        month_names = {
+                                            1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr', 5: 'Mai', 6: 'Jun',
+                                            7: 'Jul', 8: 'Ago', 9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'
+                                        }
+                                        rf_pivot.columns = [month_names.get(col, f'M{col}') for col in rf_pivot.columns]
+                                        
+                                        # Calcular total anual da taxa livre
+                                        rf_yearly = []
+                                        for year in rf_pivot.index:
+                                            year_data = rf_pivot.loc[year].dropna()
+                                            if len(year_data) > 0:
+                                                annual_return = (1 + year_data).prod() - 1
+                                                rf_yearly.append(annual_return)
+                                            else:
+                                                rf_yearly.append(np.nan)
+                                        
+                                        rf_pivot['Total Anual'] = rf_yearly
+                                        
+                                        # Exibir tabela da taxa de referência
+                                        st.subheader("🏛️ Retornos Mensais da Taxa de Referência")
+                                        
+                                        rf_display = rf_pivot.copy()
+                                        
+                                        # Aplicar formatação
+                                        for col in rf_display.columns:
+                                            rf_display[col] = rf_display[col].apply(
+                                                lambda x: f"{x:.2%}" if pd.notna(x) else "-"
+                                            )
+                                        
+                                        # Aplicar estilo
+                                        styled_rf = rf_display.style.applymap(color_negative_red)
+                                        
+                                        # Exibir
+                                        st.dataframe(
+                                            styled_rf,
+                                            use_container_width=True,
+                                            height=300
+                                        )
+                                
+                                # 3. TABELA DE EXCESSO (se disponível)
+                                if excess_table is not None:
+                                    st.subheader("📈 Excesso de Retorno Mensal (Portfólio - Taxa de Referência)")
                                     
                                     excess_display = excess_table.copy()
                                     
@@ -1132,8 +1239,17 @@ if df is not None:
                                         height=300
                                     )
                                 
+                                # Explicação das tabelas
+                                st.info(
+                                    "💡 **Como interpretar:**\n"
+                                    "• **Verde**: Retorno positivo no mês\n"
+                                    "• **Vermelho**: Retorno negativo no mês\n"
+                                    "• **Total Anual**: Performance acumulada do ano\n"
+                                    "• **Excesso**: Quanto o portfólio superou (ou ficou abaixo) da taxa de referência"
+                                )
+                                
                             except Exception as e:
-                                st.warning(f"⚠️ Não foi possível gerar a tabela mensal: {str(e)}")
+                                st.warning(f"⚠️ Não foi possível gerar as tabelas mensais: {str(e)}")
                                 st.info("💡 Isso pode acontecer se os dados não tiverem informações de data ou forem insuficientes.")
                             
                          
