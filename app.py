@@ -134,6 +134,90 @@ def transformar_base_zero(df_precos):
     
     return df_base_zero, colunas_removidas
 
+def processar_dados_precos(df_bruto, origem="Upload"):
+    """
+    NOVA FUNÇÃO CORRIGIDA: Processa dados de preços (de qualquer origem) para base 0
+    AGORA segue EXATAMENTE o mesmo fluxo que o Yahoo Finance
+    """
+    try:
+        st.info(f"📊 Processando {origem}: {df_bruto.shape[1]} colunas detectadas")
+        
+        # ETAPA 1: Identificar e separar apenas ESTRUTURA (sem processar ainda)
+        dates_col = None
+        taxa_ref_col = None
+        nome_taxa_ref = None
+        
+        if isinstance(df_bruto.columns[0], str) and 'data' in df_bruto.columns[0].lower():
+            # Primeira coluna é data - guardar para depois
+            dates_col = df_bruto.iloc[:, 0]
+            
+            # Verificar se segunda coluna é taxa de referência
+            if len(df_bruto.columns) > 2 and isinstance(df_bruto.columns[1], str):
+                col_name = df_bruto.columns[1].lower()
+                if any(term in col_name for term in ['taxa', 'livre', 'risco', 'ibov', 'ref', 'cdi', 'selic']):
+                    # Tem taxa de referência - guardar para depois
+                    taxa_ref_col = df_bruto.iloc[:, 1]
+                    nome_taxa_ref = df_bruto.columns[1]
+                    dados_para_processar = df_bruto.iloc[:, 1:]  # Taxa + Ativos (colunas B em diante)
+                else:
+                    # Não tem taxa de referência
+                    dados_para_processar = df_bruto.iloc[:, 1:]  # Só ativos (coluna B em diante)
+            else:
+                # Só tem uma coluna além da data
+                dados_para_processar = df_bruto.iloc[:, 1:]  # Só ativos
+        else:
+            # Primeira coluna não é data - processar tudo
+            dados_para_processar = df_bruto
+        
+        # ETAPA 2: APLICAR O MESMO FLUXO DO YAHOO FINANCE
+        # Isso inclui: limpeza de primeiros valores inválidos + preenchimento + conversão base 0
+        with st.spinner(f"🔄 Aplicando fluxo completo (limpeza + conversão)..."):
+            dados_base_zero, colunas_removidas = transformar_base_zero(dados_para_processar)
+        
+        if dados_base_zero is None or dados_base_zero.empty:
+            st.error("❌ Erro na conversão para base 0")
+            return None
+        
+        # Mostrar o que foi removido (igual ao Yahoo)
+        if colunas_removidas:
+            st.warning(f"⚠️ Colunas removidas (valor inicial inválido): {', '.join(colunas_removidas)}")
+        
+        # ETAPA 3: Reconstruir DataFrame final (DEPOIS da limpeza)
+        df_final = pd.DataFrame()
+        
+        # Adicionar datas se existem
+        if dates_col is not None:
+            # Sincronizar datas com dados válidos (após limpeza)
+            valid_indices = dados_base_zero.index
+            dates_sync = dates_col.iloc[valid_indices].reset_index(drop=True)
+            df_final['Data'] = dates_sync
+        
+        # ETAPA 4: Separar taxa de referência DOS DADOS JÁ PROCESSADOS
+        if taxa_ref_col is not None and nome_taxa_ref in dados_base_zero.columns:
+            # Taxa de referência já foi processada junto com tudo
+            df_final[nome_taxa_ref] = dados_base_zero[nome_taxa_ref].reset_index(drop=True)
+            st.info(f"🏛️ Taxa de referência processada: {nome_taxa_ref}")
+            
+            # Remover taxa de referência dos ativos
+            dados_ativos_final = dados_base_zero.drop(columns=[nome_taxa_ref])
+        else:
+            # Não tem taxa de referência ou foi removida na limpeza
+            dados_ativos_final = dados_base_zero
+        
+        # ETAPA 5: Adicionar dados dos ativos processados
+        for col in dados_ativos_final.columns:
+            df_final[col] = dados_ativos_final[col].reset_index(drop=True)
+        
+        st.success(f"✅ Processamento completo: {len(dados_ativos_final.columns)} ativos em base 0")
+        
+        return df_final
+        
+    except Exception as e:
+        st.error(f"❌ Erro no processamento de {origem}: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+        return None
+
 # Configuração da página
 st.set_page_config(
     page_title="Otimizador de Portfólio",
@@ -185,7 +269,7 @@ if st.session_state.show_help:
             
             1. **📁 Carregue seus dados**
                - Use o upload ou escolha um exemplo
-               - Formato: Excel com retornos diários
+               - Formato: Excel com preços diários
             
             2. **🎯 Configure a otimização**
                - Selecione os ativos (mínimo 2)
@@ -209,15 +293,14 @@ if st.session_state.show_help:
             
             | Data | Taxa Ref (opcional) | Ativo 1 | Ativo 2 | ... |
             |------|---------------------|---------|---------|-----|
-            | 01/01/2023 | 0.0005 | 0.0120 | -0.0050 | ... |
-            | 02/01/2023 | 0.0005 | -0.0030 | 0.0100 | ... |
+            | 01/01/2023 | 120.54 | 205.32 |145.65 | ... |
+            | 02/01/2023 | 123.67 | 204.21 |139.57 | ... |
             
             ### ⚠️ Importante:
             - **Coluna A**: Datas (formato data)
             - **Coluna B**: Taxa referência - CDI, IBOV, etc. (opcional)
-            - **Outras colunas**: Retornos diários em decimal
-            - **Exemplo**: 1.2% = 0.012 (não use 1.2)
-            
+            - **Outras colunas**: Preços diários em valores absolutos
+                        
             ### 📁 Dados de Exemplo Disponíveis:
             - **Ações Brasileiras**: IBOV, blue chips
             - **Fundos Imobiliários**: FIIs principais
@@ -241,8 +324,8 @@ if st.session_state.show_help:
             | **Sharpe Ratio** | Carteiras tradicionais | Retorno/Risco total |
             | **Sortino Ratio** | Aversão a perdas | Penaliza só volatilidade negativa |
             | **Minimizar Risco** | Perfil conservador | Menor volatilidade possível |
-            | **Maximizar Inclinação** | Tendência de alta | Crescimento mais consistente |
-            | **Inclinação/[(1-R²)×Vol]** | Crescimento estável | Combina tendência e previsibilidade |
+            | **Maximizar Inclinação** | Tendência de alta | Busca somente mair ganho |
+            | **Inclinação/[(1-R²)×Vol]** | Crescimento estável | Combina tendência, previsibilidade e volatilidade|
             
             ### 📊 Limites de Peso:
             
@@ -407,12 +490,18 @@ SAMPLE_DATA = {
 def load_from_github(filename):
     """
     Carrega arquivo Excel diretamente do GitHub
+    MODIFICADO: Agora processa automaticamente dados de preços para base 0
     """
     url = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}/sample_data/{filename}"
     
     try:
-        df = pd.read_excel(url)
-        return df
+        df_bruto = pd.read_excel(url)
+        
+        # NOVO: Processar automaticamente para base 0
+        df_processado = processar_dados_precos(df_bruto, f"GitHub: {filename}")
+        
+        return df_processado
+        
     except Exception as e:
         st.error(f"Erro ao carregar arquivo do GitHub: {str(e)}")
         st.info("Verifique se o arquivo existe e o repositório é público")
@@ -574,10 +663,17 @@ with st.sidebar:
         
         if uploaded_file is not None:
             try:
-                df_temp = pd.read_excel(uploaded_file)
-                st.session_state['df'] = df_temp
-                st.session_state['data_source'] = "Upload Manual"
-                st.success("✅ Arquivo carregado!")
+                # Ler arquivo bruto
+                df_bruto = pd.read_excel(uploaded_file)
+                
+                # NOVO: Processar dados de preços para base 0
+                df_processado = processar_dados_precos(df_bruto, "Upload Manual")
+                
+                if df_processado is not None:
+                    st.session_state['df'] = df_processado
+                    st.session_state['data_source'] = "Upload Manual"
+                    st.success("✅ Arquivo carregado!")
+                
             except Exception as e:
                 st.error(f"Erro ao ler arquivo: {str(e)}")
 
@@ -1610,7 +1706,7 @@ else:
     2. **Estruture sua planilha** assim:
        - Primeira coluna: Datas
        - Segunda coluna: Coluna de referência (CDI, IBOV, etc)
-       - Outras colunas: Retornos de cada ativo (base 0)
+       - Outras colunas: Preços de cada ativo (base real)
     
     3. **Faça upload** do arquivo Excel
     
