@@ -1420,6 +1420,9 @@ if df is not None:
                             # Gráfico de evolução do portfólio COM TAXA LIVRE
                             st.header("📈 Evolução do Portfólio Otimizado")
                             
+                            # Buscar datas do otimizador
+                            dates = getattr(optimizer, 'dates', None)   
+                            
                             # Criar DataFrame para o gráfico
                             periods = range(1, len(metrics['portfolio_cumulative']) + 1)
                             
@@ -1428,7 +1431,7 @@ if df is not None:
                             
                             # Linha do portfólio
                             fig_line.add_trace(go.Scatter(
-                                x=list(periods),
+                                x=pd.to_datetime(dates).dt.strftime('%d/%m/%Y') if dates is not None else list(periods),
                                 y=metrics['portfolio_cumulative'] * 100,
                                 mode='lines',
                                 name='Portfólio Otimizado',
@@ -1438,7 +1441,7 @@ if df is not None:
                             # Se temos taxa livre, adicionar linha
                             if hasattr(optimizer, 'risk_free_cumulative') and optimizer.risk_free_cumulative is not None:
                                 fig_line.add_trace(go.Scatter(
-                                    x=list(periods),
+                                    x=pd.to_datetime(dates).dt.strftime('%d/%m/%Y') if dates is not None else list(periods),
                                     y=optimizer.risk_free_cumulative * 100,
                                     mode='lines',
                                     name='Taxa de Referência',
@@ -1448,7 +1451,7 @@ if df is not None:
                                 # Adicionar linha de excesso de retorno
                                 excess_cumulative = metrics['portfolio_cumulative'] - optimizer.risk_free_cumulative.values
                                 fig_line.add_trace(go.Scatter(
-                                    x=list(periods),
+                                    x=pd.to_datetime(dates).dt.strftime('%d/%m/%Y') if dates is not None else list(periods),
                                     y=excess_cumulative * 100,
                                     mode='lines',
                                     name='Excesso de Retorno',
@@ -1458,7 +1461,7 @@ if df is not None:
                             # Personalizar layout
                             fig_line.update_layout(
                                 title='Evolução do Retorno Acumulado',
-                                xaxis_title='Dias de Negociação',
+                                xaxis_title='Período',
                                 yaxis_title='Retorno Acumulado (%)',
                                 hovermode='x unified',
                                 height=500,
@@ -1469,7 +1472,12 @@ if df is not None:
                                     xanchor="left",
                                     x=0.01
                                 ),
-                                xaxis=dict(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)'),
+                                xaxis=dict(
+                                    showgrid=True, 
+                                    gridwidth=1, 
+                                    gridcolor='rgba(128,128,128,0.2)',
+                                    nticks=12  # ← NOVO: Limita a 10 datas no máximo
+                                ),
                                 yaxis=dict(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
                             )
                             
