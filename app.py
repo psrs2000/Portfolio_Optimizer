@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 def buscar_dados_yahoo(simbolos, data_inicio, data_fim, sufixo=".SA"):
     """
     Busca dados do Yahoo Finance (adaptado do seu código)
+    ATUALIZADO: Suporte a códigos livres sem sufixo
     """
     dados_historicos = {}
     simbolos_com_erro = []
@@ -29,17 +30,37 @@ def buscar_dados_yahoo(simbolos, data_inicio, data_fim, sufixo=".SA"):
             status_text.text(f"Buscando {simbolo}... ({i+1}/{len(simbolos)})")
             progress_bar.progress((i + 1) / len(simbolos))
             
-            simbolo_completo = simbolo + sufixo if sufixo else simbolo
+            # NOVA LÓGICA: Verificar se é código livre ou precisa de sufixo
+            if sufixo == "" or sufixo is None:
+                # Códigos livres - usar exatamente como digitado
+                simbolo_completo = simbolo
+            elif "." in simbolo:
+                # Código já tem sufixo - usar como está (para compatibilidade)
+                simbolo_completo = simbolo
+                st.info(f"🔍 Código {simbolo} já contém sufixo - usando como digitado")
+            else:
+                # Código tradicional - adicionar sufixo
+                simbolo_completo = simbolo + sufixo
+            
             ticker = yf.Ticker(simbolo_completo)
             hist = ticker.history(start=start_date, end=end_date, interval="1d")
             
             if not hist.empty and len(hist) > 5:  # Pelo menos 5 dias de dados
+                # IMPORTANTE: Salvar com o código ORIGINAL para manter consistência
                 dados_historicos[simbolo] = hist
+                
+                # Debug para códigos livres
+                if sufixo == "":
+                    st.success(f"✅ {simbolo} → encontrado como {simbolo_completo}")
             else:
                 simbolos_com_erro.append(simbolo)
+                if sufixo == "":
+                    st.warning(f"⚠️ {simbolo} → sem dados suficientes")
                 
         except Exception as e:
             simbolos_com_erro.append(simbolo)
+            if sufixo == "":
+                st.error(f"❌ {simbolo} → erro: {str(e)}")
     
     progress_bar.empty()
     status_text.empty()
@@ -220,7 +241,7 @@ def processar_dados_precos(df_bruto, origem="Upload"):
 
 # Configuração da página
 st.set_page_config(
-    page_title="Otimizador de Portfolio",
+    page_title="Otimizador de Portfólio",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -247,7 +268,7 @@ def toggle_help():
     st.session_state.show_help = not st.session_state.show_help
 
 # Título
-st.title("📊 Otimizador de Portfolio")
+st.title("📊 Otimizador de Portfólio")
 col1, col2 = st.columns([6, 1])
 with col1:
     st.markdown("*Baseado na metodologia de Markowitz*")
@@ -712,12 +733,13 @@ with st.sidebar:
         # Sugestões rápidas
         st.markdown("💡 **Sugestões:** BOVA11 (Ibovespa), LFTS11 (CDI), SMAL11 (Small Caps)")
         
-        # Tipo de ativo
+        # Tipo de ativo - ATUALIZADO COM CÓDIGOS LIVRES
         tipos_disponiveis = [
             ("Ações Brasileiras", ".SA"),
             ("Criptomoedas", ""),
             ("Ações Americanas", ""),
-            ("ETFs Americanos", "")
+            ("ETFs Americanos", ""),
+            ("Códigos Livres do Yahoo", "LIVRE")  # ← NOVA OPÇÃO
         ]
         
         tipo_ativo = st.selectbox(
@@ -728,7 +750,17 @@ with st.sidebar:
         )
         sufixo = tipo_ativo[1]
         
-        # Período
+        # NOVA SEÇÃO: Instrução condicional para códigos livres
+        if sufixo == "LIVRE":
+            st.info(
+                "🔥 **Modo Códigos Livres Ativado!**\n\n"
+                "• Digite os códigos **exatamente** como aparecem no Yahoo Finance\n"
+                "• Exemplos de mistura: `PETR4.SA`, `MSFT`, `BTC-USD`, `BOVA11.SA`\n"
+                "• Para o ativo de referência também use o código completo\n"
+                "• Não será adicionado nenhum sufixo automático"
+            )
+        
+        # Período (código existente continua igual)
         st.markdown("**📅 Período:**")
         col1, col2 = st.columns(2)
         
@@ -746,7 +778,7 @@ with st.sidebar:
                 max_value=datetime.now().date()
             )
         
-        # Botão para buscar
+        # Botão para buscar - LÓGICA ATUALIZADA
         if st.button("🚀 Buscar e Processar", use_container_width=True, type="primary"):
             # Validações
             simbolos_lista = [s.strip().upper() for s in simbolos_input.split('\n') if s.strip()]
@@ -756,8 +788,9 @@ with st.sidebar:
             elif data_inicio >= data_fim:
                 st.error("❌ Data de início deve ser anterior à data fim")
             else:
-                # NOVO: Adicionar ativo de referência à lista se selecionado
+                # NOVA LÓGICA: Códigos livres vs sufixo automático
                 simbolos_completos = simbolos_lista.copy()
+                
                 if usar_referencia and ativo_referencia.strip():
                     ativo_ref_clean = ativo_referencia.strip().upper()
                     if ativo_ref_clean not in simbolos_completos:
@@ -765,13 +798,24 @@ with st.sidebar:
                         st.info(f"📊 Ativo de referência adicionado: {ativo_ref_clean}")
                 
                 with st.spinner("🔄 Buscando dados do Yahoo Finance..."):
-                    # 1. Buscar dados
-                    dados_yahoo, erros = buscar_dados_yahoo(
-                        simbolos_completos, 
-                        datetime.combine(data_inicio, datetime.min.time()),
-                        datetime.combine(data_fim, datetime.min.time()),
-                        sufixo
-                    )
+                    # MODIFICAÇÃO PRINCIPAL: Condicional do sufixo
+                    if sufixo == "LIVRE":
+                        # Modo códigos livres - não adiciona sufixo
+                        dados_yahoo, erros = buscar_dados_yahoo(
+                            simbolos_completos, 
+                            datetime.combine(data_inicio, datetime.min.time()),
+                            datetime.combine(data_fim, datetime.min.time()),
+                            sufixo=""  # ← Sem sufixo
+                        )
+                        st.info("🔥 Modo códigos livres: buscando códigos como digitados")
+                    else:
+                        # Modo tradicional - adiciona sufixo
+                        dados_yahoo, erros = buscar_dados_yahoo(
+                            simbolos_completos, 
+                            datetime.combine(data_inicio, datetime.min.time()),
+                            datetime.combine(data_fim, datetime.min.time()),
+                            sufixo
+                        )
                     
                     if dados_yahoo:
                         st.success(f"✅ Dados obtidos para {len(dados_yahoo)} ativos")
