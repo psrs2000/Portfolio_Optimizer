@@ -220,7 +220,7 @@ def processar_dados_precos(df_bruto, origem="Upload"):
 
 # Configuração da página
 st.set_page_config(
-    page_title="Otimizador de Portfólio",
+    page_title="Otimizador de Portfolio",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -247,7 +247,7 @@ def toggle_help():
     st.session_state.show_help = not st.session_state.show_help
 
 # Título
-st.title("📊 Otimizador de Portfólio")
+st.title("📊 Otimizador de Portfolio")
 col1, col2 = st.columns([6, 1])
 with col1:
     st.markdown("*Baseado na metodologia de Markowitz*")
