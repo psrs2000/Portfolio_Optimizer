@@ -821,107 +821,84 @@ with st.sidebar:
                         st.success(f"✅ Dados obtidos para {len(dados_yahoo)} ativos")
                         
                         if erros:
-                            if sufixo == "LIVRE":
-                                st.warning(f"⚠️ Códigos não encontrados: {', '.join(erros)}")
-                                st.info("💡 Verifique se os códigos estão corretos no Yahoo Finance")
-                            else:
-                                st.warning(f"⚠️ Erros em: {', '.join(erros)}")
+                            st.warning(f"⚠️ Erros em: {', '.join(erros)}")
                         
-                        # 2. Consolidar PREÇOS BRUTOS
-                        with st.spinner("🔄 Consolidando preços..."):
-                            df_precos_brutos = criar_consolidado_yahoo(dados_yahoo)
+                        # 2. Consolidar
+                        with st.spinner("🔄 Consolidando dados..."):
+                            df_consolidado = criar_consolidado_yahoo(dados_yahoo)
                         
-                        if df_precos_brutos is not None:
-                            st.success(f"✅ Preços consolidados: {df_precos_brutos.shape}")
+                        # DEBUG: Verificar consolidado
+                        if df_consolidado is not None:
+                            st.success(f"✅ Consolidado criado: {df_consolidado.shape}")
                             
-                            # 🔥 NOVA LÓGICA: SALVAR PREÇOS BRUTOS NO SESSION STATE
-                            df_precos_com_data = df_precos_brutos.copy()
-                            df_precos_com_data = df_precos_com_data.reset_index()  # Data vira primeira coluna
+                            # 3. Transformar para base 0
+                            with st.spinner("🔄 Transformando para base 0..."):
+                                df_base_zero, removidas = transformar_base_zero(df_consolidado)
                             
-                            # REORGANIZAR ATIVO DE REFERÊNCIA se necessário
-                            if usar_referencia and ativo_referencia.strip():
-                                ativo_ref_clean = ativo_referencia.strip().upper()
+                            # DEBUG: Verificar transformação
+                            if df_base_zero is not None and not df_base_zero.empty:
+                                st.success(f"✅ Base 0 criada: {df_base_zero.shape}")
                                 
-                                if ativo_ref_clean in df_precos_com_data.columns:
-                                    # Renomear para que o otimizador detecte
-                                    nome_referencia = f"Taxa_Ref_{ativo_ref_clean}"
+                                # 4. Preparar para o otimizador com ATIVO DE REFERÊNCIA
+                                try:
+                                    df_final = df_base_zero.copy()
+                                    df_final = df_final.reset_index()  # Data vira primeira coluna
                                     
-                                    # Reorganizar: Data, Taxa_Ref, Outros_Ativos
-                                    colunas_reorganizadas = ['Data']
-                                    outras_colunas = [col for col in df_precos_com_data.columns 
-                                                    if col not in ['Data', ativo_ref_clean]]
-                                    
-                                    # Renomear a coluna do ativo de referência
-                                    df_precos_com_data = df_precos_com_data.rename(columns={ativo_ref_clean: nome_referencia})
-                                    
-                                    # Reorganizar colunas: Data, Taxa_Ref, Outros
-                                    colunas_reorganizadas.append(nome_referencia)
-                                    colunas_reorganizadas.extend(outras_colunas)
-                                    
-                                    df_precos_com_data = df_precos_com_data[colunas_reorganizadas]
-                                    
-                                    st.info(f"🏛️ Ativo de referência renomeado para: {nome_referencia}")
-                            
-                            # 🎯 SALVAR PREÇOS BRUTOS (PERPÉTUA)
-                            st.session_state['dados_brutos'] = df_precos_com_data
-                            st.session_state['fonte_dados'] = f"Yahoo Finance ({len(dados_yahoo)} ativos)"
-                            st.session_state['periodo_disponivel'] = {
-                                'inicio': df_precos_com_data['Data'].min(),
-                                'fim': df_precos_com_data['Data'].max()
-                            }
-                            
-                            # 3. Converter para base 0 (PROCESSO NORMAL)
-                            with st.spinner("🔄 Convertendo para base 0..."):
-                                dados_base_zero, removidas = transformar_base_zero(df_precos_brutos)
-                            
-                            if dados_base_zero is not None and not dados_base_zero.empty:
-                                st.success(f"✅ Base 0 criada: {dados_base_zero.shape}")
-                                
-                                # 4. Preparar DataFrame final para compatibilidade
-                                df_final = dados_base_zero.copy()
-                                df_final = df_final.reset_index()  # Data vira primeira coluna
-                                
-                                # Reorganizar ativo de referência se necessário (mesmo processo)
-                                if usar_referencia and ativo_referencia.strip():
-                                    ativo_ref_clean = ativo_referencia.strip().upper()
-                                    
-                                    if ativo_ref_clean in df_final.columns:
-                                        nome_referencia = f"Taxa_Ref_{ativo_ref_clean}"
-                                        colunas_reorganizadas = ['Data']
-                                        outras_colunas = [col for col in df_final.columns 
-                                                        if col not in ['Data', ativo_ref_clean]]
+                                    # NOVO: Reorganizar colunas se tem ativo de referência
+                                    if usar_referencia and ativo_referencia.strip():
+                                        ativo_ref_clean = ativo_referencia.strip().upper()
                                         
-                                        df_final = df_final.rename(columns={ativo_ref_clean: nome_referencia})
-                                        colunas_reorganizadas.append(nome_referencia)
-                                        colunas_reorganizadas.extend(outras_colunas)
-                                        df_final = df_final[colunas_reorganizadas]
-                                
-                                # 🎯 SALVAR DADOS EM BASE 0 (COMPATIBILIDADE)
-                                st.session_state['df'] = df_final
-                                st.session_state['data_source'] = f"Yahoo Finance ({len(dados_yahoo)} ativos)"
-                                
-                                st.success("🎉 Dados processados e perpetuados!")
-                                
-                                # 🔥 NOVO: Mostrar resumo dos dados perpetuados
-                                periodo = st.session_state['periodo_disponivel']
-                                resumo_texto = (
-                                    f"📊 **Dados Perpetuados:**\n"
-                                    f"• 💾 **Preços brutos salvos:** {df_precos_com_data.shape[0]} dias\n"
-                                    f"• 🎯 **Base 0 gerada:** {len(dados_base_zero.columns)} ativos\n"
-                                    f"• 📅 **Período disponível:** {periodo['inicio'].strftime('%d/%m/%Y')} a {periodo['fim'].strftime('%d/%m/%Y')}\n"
-                                    f"• 🚀 **Pronto para otimização em qualquer sub-período!**\n"
-                                )
-                                
-                                if usar_referencia and ativo_referencia.strip():
-                                    resumo_texto += f"• 🏛️ **Ativo de referência:** {ativo_referencia.strip().upper()}\n"
-                                
-                                if removidas:
-                                    resumo_texto += f"• ⚠️ **Removidos:** {', '.join(removidas)}"
-                                
-                                st.info(resumo_texto)
-                                
-                                st.rerun()
-                                
+                                        if ativo_ref_clean in df_final.columns:
+                                            # CORREÇÃO: Renomear para que o otimizador detecte
+                                            nome_referencia = f"Taxa_Ref_{ativo_ref_clean}"
+                                            
+                                            # Reorganizar: Data, Taxa_Ref_XXXX, Outros_Ativos
+                                            colunas_reorganizadas = ['Data']
+                                            outras_colunas = [col for col in df_final.columns 
+                                                            if col not in ['Data', ativo_ref_clean]]
+                                            
+                                            # Renomear a coluna do ativo de referência
+                                            df_final = df_final.rename(columns={ativo_ref_clean: nome_referencia})
+                                            
+                                            # Reorganizar colunas: Data, Taxa_Ref, Outros
+                                            colunas_reorganizadas.append(nome_referencia)
+                                            colunas_reorganizadas.extend(outras_colunas)
+                                            
+                                            df_final = df_final[colunas_reorganizadas]
+                                            
+                                            st.info(f"🏛️ Ativo de referência renomeado para: {nome_referencia}")
+                                            st.success(f"✅ Otimizador detectará automaticamente como taxa de referência!")
+                                        else:
+                                            st.warning(f"⚠️ Ativo de referência {ativo_ref_clean} não encontrado nos dados")
+                                    
+                                    # Salvar no session state
+                                    st.session_state['df'] = df_final
+                                    st.session_state['data_source'] = f"Yahoo Finance ({len(dados_yahoo)} ativos)"
+                                    
+                                    st.success("🎉 Dados processados e carregados!")
+                                    
+                                    # Mostrar resumo
+                                    resumo_texto = (
+                                        f"📊 **Resumo:**\n"
+                                        f"• Ativos processados: {len(df_base_zero.columns)}\n"
+                                        f"• Período: {data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}\n"
+                                        f"• Dias: {len(df_base_zero)} registros\n"
+                                    )
+                                    
+                                    if usar_referencia and ativo_referencia.strip():
+                                        resumo_texto += f"• Ativo de referência: {ativo_referencia.strip().upper()}\n"
+                                    
+                                    if removidas:
+                                        resumo_texto += f"• Removidos: {', '.join(removidas)}"
+                                    
+                                    st.info(resumo_texto)
+                                    
+                                    st.rerun()
+                                    
+                                except Exception as e:
+                                    st.error(f"❌ Erro ao preparar dados: {str(e)}")
+                                    import traceback
+                                    st.code(traceback.format_exc())
                             else:
                                 st.error("❌ Erro na transformação para base 0")
                         else:
