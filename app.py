@@ -1484,7 +1484,7 @@ if dados_brutos is not None:
                                 
                                 # Personalizar layout
                                 fig_line.update_layout(
-                                    title='Evolução do Retorno Acumulado - In-Sample',
+                                    title='Evolução do Retorno Acumulado',
                                     xaxis_title='Período',
                                     yaxis_title='Retorno Acumulado (%)',
                                     hovermode='x unified',
@@ -1495,8 +1495,16 @@ if dados_brutos is not None:
                                         y=0.99,
                                         xanchor="left",
                                         x=0.01
-                                    )
+                                    ),
+                                    xaxis=dict(
+                                        showgrid=True, 
+                                        gridwidth=1, 
+                                        gridcolor='rgba(128,128,128,0.2)',
+                                        nticks=12  # ← NOVO: Limita a 10 datas no máximo
+                                    ),
+                                    yaxis=dict(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
                                 )
+
                                 
                                 st.plotly_chart(fig_line, use_container_width=True)
                 
