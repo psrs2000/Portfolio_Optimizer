@@ -1350,7 +1350,7 @@ if dados_brutos is not None:
                                 
                                 # Segunda linha - Métricas de risco
                                 st.subheader("📊 Métricas de Risco")
-                                col1, col2, col3, col4, col5, col6 = st.columns(6)
+                                col1, col2, col3, col4, col5 = st.columns(5)
                                 
                                 with col1:
                                     st.metric(
@@ -1375,19 +1375,12 @@ if dados_brutos is not None:
                                 
                                 with col4:
                                     st.metric(
-                                        "📉 Downside Dev", 
-                                        f"{metrics['downside_deviation']:.2%}",
-                                        help="Volatilidade apenas dos retornos negativos"
-                                    )
-                                
-                                with col5:
-                                    st.metric(
                                         "🏛️ Taxa Ref", 
                                         f"{metrics['risk_free_rate']:.2%}",
                                         help="Taxa de referência acumulada"
                                     )
                                 
-                                with col6:
+                                with col5:
                                     st.metric(
                                         "📈 Excesso", 
                                         f"{metrics['excess_return']:.2%}",
