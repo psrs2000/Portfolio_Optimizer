@@ -1399,47 +1399,71 @@ if dados_brutos is not None:
                                 
                                 portfolio_df = optimizer.get_portfolio_summary(result['weights'])
                                 
-                                col1, col2 = st.columns([1, 1])
+                                #col1, col2 = st.columns([1, 1])
                                 
-                                with col1:
-                                    st.subheader("📋 Tabela de Pesos")
-                                    portfolio_display = portfolio_df.copy()
-                                    portfolio_display['Peso Inicial (%)'] = portfolio_display['Peso Inicial (%)'].apply(lambda x: f"{x:.2f}%")
-                                    portfolio_display['Peso Atual (%)'] = portfolio_display['Peso Atual (%)'].apply(lambda x: f"{x:.2f}%")
-                                    
-                                    st.dataframe(portfolio_display, use_container_width=True, hide_index=True)
-                                    
-                                    # Mostrar totais
-                                    total_initial = portfolio_df['Peso Inicial (%)'].sum()
-                                    total_current = portfolio_df['Peso Atual (%)'].sum()
-                                    
-                                    col_total1, col_total2 = st.columns(2)
-                                    with col_total1:
-                                        st.info(f"✅ Total inicial: {total_initial:.1f}%")
-                                    with col_total2:
-                                        st.info(f"🔄 Total atual: {total_current:.1f}%")
+                                #with col1:
+                                st.subheader("📋 Tabela de Pesos")
+                                portfolio_display = portfolio_df.copy()
+                                portfolio_display['Peso Inicial (%)'] = portfolio_display['Peso Inicial (%)'].apply(lambda x: f"{x:.2f}%")
+                                portfolio_display['Peso Atual (%)'] = portfolio_display['Peso Atual (%)'].apply(lambda x: f"{x:.2f}%")
                                 
-                                with col2:
-                                    st.subheader("🥧 Distribuição Atual")
-                                    if len(portfolio_df) > 0:
-                                        fig = px.pie(
-                                            portfolio_df,
-                                            values='Peso Atual (%)',
-                                            names='Ativo',
-                                            hole=0.4,
-                                            color_discrete_sequence=px.colors.qualitative.Set3,
-                                            title="Pesos Após Evolução dos Preços"
+                                st.dataframe(portfolio_display, use_container_width=True, hide_index=True)
+                                
+                                # Mostrar totais
+                                total_initial = portfolio_df['Peso Inicial (%)'].sum()
+                                total_current = portfolio_df['Peso Atual (%)'].sum()
+                                
+                                col_total1, col_total2 = st.columns(2)
+                                with col_total1:
+                                    st.info(f"✅ Total inicial: {total_initial:.1f}%")
+                                with col_total2:
+                                    st.info(f"🔄 Total atual: {total_current:.1f}%")
+
+                                # Tabela mensal - Período de Otimização
+                                if hasattr(optimizer, 'dates'):
+                                    st.subheader("📅 Performance Mensal - Período de Otimização")
+                                    
+                                    try:
+                                        monthly_table, excess_table = create_monthly_returns_table(
+                                            optimizer.returns_data,  # Dados só da otimização
+                                            result['weights'],
+                                            optimizer.dates,        # Datas só da otimização
+                                            getattr(optimizer, 'risk_free_returns', None)
                                         )
-                                        fig.update_traces(
-                                            textposition='inside', 
-                                            textinfo='percent+label',
-                                            textfont_size=12
-                                        )
-                                        fig.update_layout(
-                                            showlegend=True,
-                                            height=400
-                                        )
-                                        st.plotly_chart(fig, use_container_width=True)
+                                        
+                                        # Função para colorir valores
+                                        def color_negative_red(val):
+                                            if val == "-" or pd.isna(val):
+                                                return 'color: gray'
+                                            try:
+                                                if isinstance(val, str) and '%' in val:
+                                                    numeric_val = float(val.replace('%', '')) / 100
+                                                else:
+                                                    numeric_val = float(val)
+                                                
+                                                if numeric_val < 0:
+                                                    return 'color: red; font-weight: bold'
+                                                elif numeric_val > 0:
+                                                    return 'color: green; font-weight: bold'
+                                                else:
+                                                    return 'color: black'
+                                            except:
+                                                return 'color: black'
+                                        
+                                        # Mostrar tabela mensal
+                                        monthly_display = monthly_table.copy()
+                                        for col in monthly_display.columns:
+                                            monthly_display[col] = monthly_display[col].apply(
+                                                lambda x: f"{x:.2%}" if pd.notna(x) else "-"
+                                            )
+                                        
+                                        styled_table = monthly_display.style.applymap(color_negative_red)
+                                        st.dataframe(styled_table, use_container_width=True)
+                                        
+                                        st.caption("💡 Esta tabela mostra apenas o período de otimização (treino)")
+                                        
+                                    except Exception as e:
+                                        st.warning(f"⚠️ Não foi possível gerar tabelas mensais: {str(e)}")
                                 
                                 # Gráfico de evolução
                                 st.subheader("📈 Evolução do Portfólio - Período de Otimização")
@@ -1683,55 +1707,311 @@ if dados_brutos is not None:
                                         except Exception as e:
                                             st.error(f"❌ Erro na validação: {str(e)}")
                                             st.info("💡 Verifique se todos os ativos têm dados no período de validação")
+ 
+    # TABELA MENSAL COMPLETA (Otimização + Validação)
+                                        st.subheader("📅 Performance Mensal - Período Completo")
+                                        
+                                        try:
+                                            # VERIFICAR SE EXISTE OTIMIZADOR DE VALIDAÇÃO
+                                            if 'optimizer_valid' in locals() and hasattr(optimizer_valid, 'returns_data'):
+                                                # Usar dados COMPLETOS do período estendido
+                                                optimizer_to_use = optimizer_valid
+                                                period_label = "Período Completo (Otimização + Validação)"
+                                            else:
+                                                # Usar dados apenas do período de otimização
+                                                optimizer_to_use = optimizer
+                                                period_label = "Período de Otimização"
+                                                st.info("📍 Mostrando apenas período de otimização (configure validação para ver período completo)")
+                                            
+                                            # Usar dados do otimizador apropriado
+                                            monthly_table_complete, excess_table_complete = create_monthly_returns_table(
+                                                optimizer_to_use.returns_data,     # Dados apropriados
+                                                result['weights'],                  # Pesos otimizados
+                                                optimizer_to_use.dates,           # Datas apropriadas
+                                                getattr(optimizer_to_use, 'risk_free_returns', None)
+                                            )
+                                            
+                                            # Função para colorir valores negativos
+                                            def color_monthly_values(val):
+                                                if val == "-" or pd.isna(val):
+                                                    return 'color: gray'
+                                                try:
+                                                    if isinstance(val, str) and '%' in val:
+                                                        numeric_val = float(val.replace('%', '')) / 100
+                                                    else:
+                                                        numeric_val = float(val)
+                                                    
+                                                    if numeric_val < 0:
+                                                        return 'color: red; font-weight: bold'
+                                                    elif numeric_val > 0:
+                                                        return 'color: green; font-weight: bold'
+                                                    else:
+                                                        return 'color: black'
+                                                except:
+                                                    return 'color: black'
+                                            
+                                            # Preparar tabela para exibição
+                                            monthly_display_complete = monthly_table_complete.copy()
+                                            for col in monthly_display_complete.columns:
+                                                monthly_display_complete[col] = monthly_display_complete[col].apply(
+                                                    lambda x: f"{x:.2%}" if pd.notna(x) else "-"
+                                                )
+                                            
+                                            # Aplicar estilo
+                                            styled_monthly_complete = monthly_display_complete.style.applymap(color_monthly_values)
+                                            
+                                            # Informações do período
+                                            if 'optimizer_valid' in locals() and hasattr(optimizer_valid, 'returns_data'):
+                                                # Com validação
+                                                periodo_otim = st.session_state['periodo_otimizacao']
+                                                periodo_analise = st.session_state['periodo_analise']
+                                                
+                                                col_info1, col_info2 = st.columns(2)
+                                                with col_info1:
+                                                    st.info(f"📊 **Período:** {periodo_otim['inicio'].strftime('%d/%m/%Y')} a {periodo_analise['fim'].strftime('%d/%m/%Y')}")
+                                                with col_info2:
+                                                    st.info(f"🔍 **Incluindo:** Otimização + Validação (período completo)")
+                                            else:
+                                                # Sem validação
+                                                periodo_otim = st.session_state['periodo_otimizacao']
+                                                
+                                                col_info1, col_info2 = st.columns(2)
+                                                with col_info1:
+                                                    st.info(f"📊 **Período:** {periodo_otim['inicio'].strftime('%d/%m/%Y')} a {periodo_otim['fim'].strftime('%d/%m/%Y')}")
+                                                with col_info2:
+                                                    st.warning(f"⚠️ **Apenas:** Período de otimização")
+                                            
+                                            # Mostrar tabela
+                                            st.dataframe(styled_monthly_complete, use_container_width=True)
+                                            
+                                            # Nota explicativa condicional
+                                            if 'optimizer_valid' in locals() and hasattr(optimizer_valid, 'returns_data'):
+                                                st.caption("💡 Esta tabela mostra a performance mensal durante todo o período analisado (treino + teste)")
+                                            else:
+                                                st.caption("💡 Esta tabela mostra apenas o período de otimização (configure validação para ver período completo)")
+                                            
+                                        except Exception as e:
+                                            st.warning(f"⚠️ Não foi possível gerar tabela mensal: {str(e)}")
+                                            st.info("💡 Verifique se há dados suficientes no período selecionado") 
                                         
                                         # Gráfico comparativo
-                                        st.subheader("📈 Evolução Acumulada - Período Completo")
+                                        st.subheader("📈 Evolução do Portfólio - Período Completo")
                                         
-                                        # Criar figura
-                                        fig = go.Figure()
+                                        # VERIFICAR SE HÁ DADOS DE VALIDAÇÃO
+                                        if df_analise is not None:
+                                            # Usar dados estendidos se disponíveis
+                                            if use_short and len(short_assets) > 0:
+                                                assets_used_in_optimization = selected_assets + short_assets
+                                            else:
+                                                assets_used_in_optimization = selected_assets
+                                            
+                                            try:
+                                                # Criar otimizador com dados completos
+                                                optimizer_extended = PortfolioOptimizer(df_analise, assets_used_in_optimization)
+                                                
+                                                # Calcular métricas com período completo
+                                                metrics_extended = optimizer_extended.calculate_portfolio_metrics(result['weights'], final_risk_free_rate)
+                                                
+                                                # Buscar datas completas
+                                                dates_extended = getattr(optimizer_extended, 'dates', None)
+                                                
+                                                # Determinar ponto de divisão (fim da otimização)
+                                                n_dias_otim = len(optimizer.returns_data)
+                                                
+                                                # Criar figura com múltiplas linhas
+                                                fig_extended = go.Figure()
+                                                
+                                                # 1. LINHA DO PORTFÓLIO (período completo)
+                                                fig_extended.add_trace(go.Scatter(
+                                                    x=pd.to_datetime(dates_extended).dt.strftime('%d/%m/%Y') if dates_extended is not None else list(range(len(metrics_extended['portfolio_cumulative']))),
+                                                    y=metrics_extended['portfolio_cumulative'] * 100,
+                                                    mode='lines',
+                                                    name='Portfólio Otimizado',
+                                                    line=dict(color='#1f77b4', width=2.5)
+                                                ))
+                                                
+                                                # 2. LINHA DA TAXA DE REFERÊNCIA (se existir)
+                                                if hasattr(optimizer_extended, 'risk_free_cumulative') and optimizer_extended.risk_free_cumulative is not None:
+                                                    fig_extended.add_trace(go.Scatter(
+                                                        x=pd.to_datetime(dates_extended).dt.strftime('%d/%m/%Y') if dates_extended is not None else list(range(len(metrics_extended['portfolio_cumulative']))),
+                                                        y=optimizer_extended.risk_free_cumulative * 100,
+                                                        mode='lines',
+                                                        name='Taxa de Referência',
+                                                        line=dict(color='#ff7f0e', width=2, dash='dash')
+                                                    ))
+                                                    
+                                                    # 3. LINHA DO EXCESSO DE RETORNO
+                                                    if metrics_extended.get('excess_cumulative') is not None:
+                                                        fig_extended.add_trace(go.Scatter(
+                                                            x=pd.to_datetime(dates_extended).dt.strftime('%d/%m/%Y') if dates_extended is not None else list(range(len(metrics_extended['portfolio_cumulative']))),
+                                                            y=metrics_extended['excess_cumulative'] * 100,
+                                                            mode='lines',
+                                                            name='Excesso de Retorno',
+                                                            line=dict(color='#2ca02c', width=2, dash='dot')
+                                                        ))
+                                                
+                                                # 4. LINHA VERTICAL - Fim da Otimização
+                                                fig_extended.add_vline(
+                                                    x=n_dias_otim-1,  # Índice do último dia de otimização
+                                                    line_dash="solid",
+                                                    line_color="red",
+                                                    line_width=2,
+                                                    annotation_text="Fim da Otimização",
+                                                    annotation_position="top"
+                                                )
+                                                
+                                                # 5. ÁREAS SOMBREADAS (sem textos internos)
+                                                # Área de Otimização (verde claro)
+                                                fig_extended.add_vrect(
+                                                    x0=0, 
+                                                    x1=n_dias_otim-1,
+                                                    fillcolor="green", 
+                                                    opacity=0.1
+                                                )
+                                                
+                                                # Área de Validação (azul claro)
+                                                if len(metrics_extended['portfolio_cumulative']) > n_dias_otim:
+                                                    fig_extended.add_vrect(
+                                                        x0=n_dias_otim-1, 
+                                                        x1=len(metrics_extended['portfolio_cumulative'])-1,
+                                                        fillcolor="blue", 
+                                                        opacity=0.1
+                                                    )
+                                                
+                                                # 6. PERSONALIZAR LAYOUT
+                                                fig_extended.update_layout(
+                                                    title='Evolução do Retorno Acumulado - Visão Completa (In-Sample + Out-of-Sample)',
+                                                    xaxis_title='Período',
+                                                    yaxis_title='Retorno Acumulado (%)',
+                                                    hovermode='x unified',
+                                                    height=500,
+                                                    showlegend=True,
+                                                    legend=dict(
+                                                        yanchor="top",
+                                                        y=0.99,
+                                                        xanchor="left",
+                                                        x=0.01
+                                                    ),
+                                                    # CONFIGURAR EIXO X: máximo 12 pontos
+                                                    xaxis=dict(
+                                                        nticks=12  # Máximo 12 marcações, sem inclinação
+                                                    )
+                                                )
+                                                
+                                                # 7. MOSTRAR GRÁFICO
+                                                st.plotly_chart(fig_extended, use_container_width=True)
+                                                
+                                                # 8. INFORMAÇÕES ADICIONAIS
+                                                col_graf1, col_graf2, col_graf3 = st.columns(3)
+                                                
+                                                with col_graf1:
+                                                    st.success(f"🎯 **Período de Otimização:** {n_dias_otim} dias")
+                                                
+                                                with col_graf2:
+                                                    dias_validacao = len(metrics_extended['portfolio_cumulative']) - n_dias_otim
+                                                    st.info(f"🔍 **Período de Validação:** {dias_validacao} dias")
+                                                
+                                                with col_graf3:
+                                                    total_dias = len(metrics_extended['portfolio_cumulative'])
+                                                    st.metric("📊 Total de Dias", f"{total_dias}")
+                                                
+                                                # 9. NOTA EXPLICATIVA
+                                                st.caption("💡 Este gráfico mostra a evolução completa do portfólio, destacando visualmente onde termina o treino e começa a validação")
+                                                
+                                            except Exception as e:
+                                                st.error(f"❌ Erro ao criar gráfico estendido: {str(e)}")
+                                                st.info("💡 Usando gráfico do período de otimização apenas")
+                                                
+                                                # FALLBACK: Gráfico original se der erro
+                                                dates = getattr(optimizer, 'dates', None)
+                                                periods = range(1, len(metrics['portfolio_cumulative']) + 1)
+                                                
+                                                fig_line = go.Figure()
+                                                
+                                                fig_line.add_trace(go.Scatter(
+                                                    x=pd.to_datetime(dates).dt.strftime('%d/%m/%Y') if dates is not None else list(periods),
+                                                    y=metrics['portfolio_cumulative'] * 100,
+                                                    mode='lines',
+                                                    name='Portfólio Otimizado',
+                                                    line=dict(color='#1f77b4', width=2.5)
+                                                ))
+                                                
+                                                if hasattr(optimizer, 'risk_free_cumulative') and optimizer.risk_free_cumulative is not None:
+                                                    fig_line.add_trace(go.Scatter(
+                                                        x=pd.to_datetime(dates).dt.strftime('%d/%m/%Y') if dates is not None else list(periods),
+                                                        y=optimizer.risk_free_cumulative * 100,
+                                                        mode='lines',
+                                                        name='Taxa de Referência',
+                                                        line=dict(color='#ff7f0e', width=2, dash='dash')
+                                                    ))
+                                                    
+                                                    excess_cumulative = metrics['portfolio_cumulative'] - optimizer.risk_free_cumulative.values
+                                                    fig_line.add_trace(go.Scatter(
+                                                        x=pd.to_datetime(dates).dt.strftime('%d/%m/%Y') if dates is not None else list(periods),
+                                                        y=excess_cumulative * 100,
+                                                        mode='lines',
+                                                        name='Excesso de Retorno',
+                                                        line=dict(color='#2ca02c', width=2, dash='dot')
+                                                    ))
+                                                
+                                                fig_line.update_layout(
+                                                    title='Evolução do Retorno Acumulado - Período de Otimização',
+                                                    xaxis_title='Período',
+                                                    yaxis_title='Retorno Acumulado (%)',
+                                                    hovermode='x unified',
+                                                    height=500,
+                                                    showlegend=True
+                                                )
+                                                
+                                                st.plotly_chart(fig_line, use_container_width=True)
                                         
-                                        # Dados para o gráfico
-                                        dates_full = optimizer_valid.dates if hasattr(optimizer_valid, 'dates') else range(len(cumulative_valid))
-                                        
-                                        # Linha do período completo
-                                        fig.add_trace(go.Scatter(
-                                            x=list(range(len(cumulative_valid))),
-                                            y=cumulative_valid * 100,
-                                            mode='lines',
-                                            name='Performance Completa',
-                                            line=dict(color='#1f77b4', width=2.5)
-                                        ))
-                                        
-                                        # Adicionar linha vertical no fim da otimização
-                                        fig.add_vline(
-                                            x=n_dias_otim,
-                                            line_dash="dash",
-                                            line_color="red",
-                                            annotation_text="Fim Otimização"
-                                        )
-                                        
-                                        # Sombrear áreas
-                                        fig.add_vrect(
-                                            x0=0, x1=n_dias_otim,
-                                            fillcolor="green", opacity=0.1,
-                                            annotation_text="Otimização", annotation_position="top left"
-                                        )
-                                        
-                                        fig.add_vrect(
-                                            x0=n_dias_otim, x1=len(cumulative_valid)-1,
-                                            fillcolor="blue", opacity=0.1,
-                                            annotation_text="Validação", annotation_position="top left"
-                                        )
-                                        
-                                        fig.update_layout(
-                                            title='Performance In-Sample vs Out-of-Sample',
-                                            xaxis_title='Dias',
-                                            yaxis_title='Retorno Acumulado (%)',
-                                            hovermode='x unified',
-                                            height=500
-                                        )
-                                        
-                                        st.plotly_chart(fig, use_container_width=True)
+                                        else:
+                                            # SE NÃO HÁ DADOS DE VALIDAÇÃO: Gráfico original
+                                            dates = getattr(optimizer, 'dates', None)
+                                            periods = range(1, len(metrics['portfolio_cumulative']) + 1)
+                                            
+                                            fig_line = go.Figure()
+                                            
+                                            fig_line.add_trace(go.Scatter(
+                                                x=pd.to_datetime(dates).dt.strftime('%d/%m/%Y') if dates is not None else list(periods),
+                                                y=metrics['portfolio_cumulative'] * 100,
+                                                mode='lines',
+                                                name='Portfólio Otimizado',
+                                                line=dict(color='#1f77b4', width=2.5)
+                                            ))
+                                            
+                                            if hasattr(optimizer, 'risk_free_cumulative') and optimizer.risk_free_cumulative is not None:
+                                                fig_line.add_trace(go.Scatter(
+                                                    x=pd.to_datetime(dates).dt.strftime('%d/%m/%Y') if dates is not None else list(periods),
+                                                    y=optimizer.risk_free_cumulative * 100,
+                                                    mode='lines',
+                                                    name='Taxa de Referência',
+                                                    line=dict(color='#ff7f0e', width=2, dash='dash')
+                                                ))
+                                                
+                                                excess_cumulative = metrics['portfolio_cumulative'] - optimizer.risk_free_cumulative.values
+                                                fig_line.add_trace(go.Scatter(
+                                                    x=pd.to_datetime(dates).dt.strftime('%d/%m/%Y') if dates is not None else list(periods),
+                                                    y=excess_cumulative * 100,
+                                                    mode='lines',
+                                                    name='Excesso de Retorno',
+                                                    line=dict(color='#2ca02c', width=2, dash='dot')
+                                                ))
+                                            
+                                            fig_line.update_layout(
+                                                title='Evolução do Retorno Acumulado - Período de Otimização Apenas',
+                                                xaxis_title='Período',
+                                                yaxis_title='Retorno Acumulado (%)',
+                                                hovermode='x unified',
+                                                height=500,
+                                                showlegend=True
+                                            )
+                                            
+                                            st.plotly_chart(fig_line, use_container_width=True)
+                                            st.info("📍 Configure um período de validação para ver o gráfico estendido")
+
+
+
                                 else:
                                     st.info("📍 Configure um período de validação para ver resultados out-of-sample")
                             
@@ -1781,69 +2061,7 @@ if dados_brutos is not None:
                                 else:
                                     st.info("📍 Configure um período de validação para comparar resultados")
                             
-                            # Tabelas mensais (se houver datas)
-                            st.subheader("📅 Performance Mensal - Período Completo")
-                            
-                            try:
-                                # Usar dados COMPLETOS do período estendido para tabela mensal
-                                monthly_table_complete, excess_table_complete = create_monthly_returns_table(
-                                    optimizer_valid.returns_data,  # Dados completos (otimização + validação)
-                                    result['weights'],              # Pesos otimizados
-                                    optimizer_valid.dates,         # Datas completas
-                                    getattr(optimizer_valid, 'risk_free_returns', None)
-                                )
-                                
-                                # Função para colorir valores negativos
-                                def color_monthly_values(val):
-                                    if val == "-" or pd.isna(val):
-                                        return 'color: gray'
-                                    try:
-                                        if isinstance(val, str) and '%' in val:
-                                            numeric_val = float(val.replace('%', '')) / 100
-                                        else:
-                                            numeric_val = float(val)
-                                        
-                                        if numeric_val < 0:
-                                            return 'color: red; font-weight: bold'
-                                        elif numeric_val > 0:
-                                            return 'color: green; font-weight: bold'
-                                        else:
-                                            return 'color: black'
-                                    except:
-                                        return 'color: black'
-                                
-                                # Preparar tabela para exibição
-                                monthly_display_complete = monthly_table_complete.copy()
-                                for col in monthly_display_complete.columns:
-                                    monthly_display_complete[col] = monthly_display_complete[col].apply(
-                                        lambda x: f"{x:.2%}" if pd.notna(x) else "-"
-                                    )
-                                
-                                # Aplicar estilo
-                                styled_monthly_complete = monthly_display_complete.style.applymap(color_monthly_values)
-                                
-                                # Informações do período
-                                periodo_otim = st.session_state['periodo_otimizacao']
-                                periodo_analise = st.session_state['periodo_analise']
-                                
-                                col_info1, col_info2 = st.columns(2)
-                                with col_info1:
-                                    st.info(f"📊 **Período:** {periodo_otim['inicio'].strftime('%d/%m/%Y')} a {periodo_analise['fim'].strftime('%d/%m/%Y')}")
-                                with col_info2:
-                                    st.info(f"🔍 **Incluindo:** Otimização + Validação (período completo)")
-                                
-                                # Mostrar tabela
-                                st.dataframe(styled_monthly_complete, use_container_width=True)
-                                
-                                # Nota explicativa
-                                st.caption("💡 Esta tabela mostra a performance mensal durante todo o período analisado (treino + teste)")
-                                
-                            except Exception as e:
-                                st.warning(f"⚠️ Não foi possível gerar tabela mensal completa: {str(e)}")
-                                st.info("💡 Verifique se há dados suficientes no período de validação")
-                        
-                        else:
-                            st.error(f"❌ {result['message']}")
+
                     
                     except Exception as e:
                         st.error(f"❌ Erro durante a otimização: {str(e)}")
