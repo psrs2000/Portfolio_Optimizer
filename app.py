@@ -350,6 +350,10 @@ def load_from_github(filename):
     
     try:
         df_bruto = pd.read_excel(url)
+
+        # ✅ NORMALIZAR: Primeira coluna sempre "Data"
+        if len(df_bruto.columns) > 0:
+            df_bruto.columns.values[0] = "Data"
         
         # SALVAR DADOS BRUTOS - NÃO PROCESSAR AINDA!
         st.session_state['dados_brutos'] = df_bruto.copy()
@@ -611,6 +615,10 @@ with st.sidebar:
             try:
                 # Ler arquivo bruto
                 df_bruto = pd.read_excel(uploaded_file)
+
+                # ✅ NORMALIZAR: Primeira coluna sempre "Data"
+                if len(df_bruto.columns) > 0:
+                    df_bruto.columns.values[0] = "Data"
                 
                 # SALVAR DADOS BRUTOS - NÃO PROCESSAR!
                 st.session_state['dados_brutos'] = df_bruto.copy()
@@ -1695,7 +1703,7 @@ if dados_brutos is not None:
                                                         st.metric("🔥 Sortino Ratio", f"{sortino_valid:.3f}",
                                                                 help="Similar ao Sharpe mas usa apenas volatilidade negativa")
                                                     
-                                                    # [RESTO DO CÓDIGO DO GRÁFICO CONTINUA...]
+
                                                     
                                         except Exception as e:
                                             st.error(f"❌ Erro na validação: {str(e)}")
@@ -2049,12 +2057,13 @@ if dados_brutos is not None:
                                     )
                                     
                                     st.dataframe(styled_df, use_container_width=True)
-                                    
 
                                 else:
                                     st.info("📍 Configure um período de validação para comparar resultados")
                             
-
+                        else:
+                            st.error(f"❌ {result['message']}")
+                            st.info("💡 Tente ajustar os parâmetros da otimização")
                     
                     except Exception as e:
                         st.error(f"❌ Erro durante a otimização: {str(e)}")
