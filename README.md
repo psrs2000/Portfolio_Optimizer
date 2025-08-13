@@ -137,7 +137,7 @@ Agora você tem **três** opções:
 • Pode resultar em retornos menores  
 
 #### 4. Maximizar Inclinação
-• Busca a tendência de alta mais consistente  
+• Busca a maior inclinação da curva de retorno, semu tilizar volatilidade e correlação. 
 • Útil para estratégias de tendência  
 
 #### 5. Maximizar Inclinação/[(1-R²)×Vol]
@@ -219,7 +219,7 @@ Permite incluir vendas a descoberto (posições negativas) na carteira.
 
 ---
 
-## 📈 **NOVO: Interpretando os Resultados v3.0**
+## 📈 Interpretando os Resultados
 
 ### Sistema de 3 Abas
 
@@ -261,9 +261,7 @@ Permite incluir vendas a descoberto (posições negativas) na carteira.
 • **VaR 95%:** Perda máxima esperada em 95% dos dias  
   - Ex: -2% = Em 95% dos dias, não perderá mais que 2%  
 
-• **Downside Deviation:** Volatilidade apenas dos retornos negativos  
-
-### **NOVO: Gráficos com Divisão Visual**
+### **Gráficos com Divisão Visual**
 
 Na aba de validação, o gráfico mostra:  
 • **Área verde:** Período de otimização (treino)  
@@ -271,11 +269,11 @@ Na aba de validação, o gráfico mostra:
 • **Linha vermelha:** Divisão entre os períodos  
 • **3 linhas:** Portfólio, Taxa Ref, Excesso  
 
-### **CORRIGIDO: Tabela de Performance Mensal**
+### **Tabela de Performance Mensal**
 
 • **Metodologia consistente** com otimizador (base 0)  
-• **Retornos mensais** agora batem com cálculos do período  
-• **Total anual** = soma dos meses (matemáticamente correto)  
+• **Retornos mensais** Os valores são calculados em relação à "cota" inicial e não do mês anterior.
+• **Total anual** = soma dos meses (como descrito no ítem anterior)  
 • **Cores:** Verde (ganho) / Vermelho (perda)  
 
 ---
@@ -299,7 +297,7 @@ Na aba de validação, o gráfico mostra:
 • Evite ativos muito correlacionados  
 • Considere diferentes setores/classes  
 
-### **NOVO: Casos de Uso v3.0**
+### Casos de Uso
 
 #### Validação de Estratégia
 • **Otimização:** 2020-2022  
@@ -318,19 +316,19 @@ Na aba de validação, o gráfico mostra:
 
 ---
 
-## ❓ Perguntas Frequentes v3.0
+## ❓ Perguntas Frequentes
 
-### **NOVO: Como usar as janelas temporais?**
+### Como usar as janelas temporais?
 **R:** Carregue dados completos, depois selecione períodos específicos. Use 70% para otimização e 30% para validação. Performance out-of-sample mais importante.
 
-### **NOVO: Yahoo Finance não encontra meu ativo**
+### Yahoo Finance não encontra meu ativo
 **R:** 
 - **Ações BR:** Use código + .SA (ex: PETR4.SA)  
 - **Criptos:** Use formato completo (ex: BTC-USD)  
 - **Códigos livres:** Digite exatamente como aparece no Yahoo  
 - **Verifique** se o período tem dados suficientes  
 
-### **NOVO: Por que in-sample é melhor que out-of-sample?**
+### Por que in-sample é melhor que out-of-sample?
 **R:** Normal! Otimização "conhece" os dados de treino. Se diferença for muito grande (>50%), pode indicar overfitting. Ajuste parâmetros ou período.
 
 ### O que é melhor: Sharpe ou Sortino?
