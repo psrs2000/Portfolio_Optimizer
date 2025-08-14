@@ -1623,9 +1623,24 @@ if dados_brutos is not None:
                                                     else:
                                                         annual_return_valid = 0
 
-                                                    # 2. VOLATILIDADE ANUALIZADA (permanece igual)
-                                                    returns_valid_only = portfolio_returns_valid[n_dias_otim:]
-                                                    vol_valid = np.std(returns_valid_only, ddof=0) * np.sqrt(252) if len(returns_valid_only) > 0 else 0
+                                                    # 2. VOLATILIDADE ANUALIZADA - METODOLOGIA VARIAC_RESULT_PU (igual ao otimizador)
+                                                    # Pegar retornos acumulados do período de validação
+                                                    portfolio_cumulative_validacao = cumulative_valid[n_dias_otim-1:]  # Desde fim otimização
+
+                                                    if len(portfolio_cumulative_validacao) > 1:
+                                                        # Adicionar ponto inicial para calcular variação
+                                                        portfolio_cumulative_with_zero = np.concatenate([[portfolio_cumulative_validacao[0]], portfolio_cumulative_validacao])
+                                                        
+                                                        # Calcular Variac_Result_PU (igual ao otimizador)
+                                                        variac_result_pu = (1 + portfolio_cumulative_with_zero[1:]) / (1 + portfolio_cumulative_with_zero[:-1])
+                                                        
+                                                        # Retornos percentuais diários
+                                                        portfolio_returns_pct_valid = variac_result_pu - 1
+                                                        
+                                                        # Volatilidade anualizada correta (mesma metodologia do otimizador)
+                                                        vol_valid = np.std(portfolio_returns_pct_valid, ddof=0) * np.sqrt(252)
+                                                    else:
+                                                        vol_valid = 0
 
                                                     # 3. TAXA LIVRE DE RISCO - CRESCIMENTO RELATIVO (BASE 0)
                                                     if hasattr(optimizer_valid, 'risk_free_cumulative') and optimizer_valid.risk_free_cumulative is not None:
@@ -1671,8 +1686,8 @@ if dados_brutos is not None:
                                                     else:
                                                         sharpe_valid = 0
                                                     
-                                                    # 5. SORTINO RATIO CORRIGIDO
-                                                    negative_returns_valid = returns_valid_only[returns_valid_only < 0]
+                                                    # ✅ SORTINO CORRIGIDO:
+                                                    negative_returns_valid = portfolio_returns_pct_valid[portfolio_returns_pct_valid < 0]  # ← USAR ESTA!
                                                     if len(negative_returns_valid) > 0:
                                                         downside_dev_valid = np.std(negative_returns_valid, ddof=0) * np.sqrt(252)
                                                         if downside_dev_valid > 0:
