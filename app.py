@@ -1601,49 +1601,67 @@ if dados_brutos is not None:
                                                         returns_valid_only = portfolio_returns_valid
                                                         cumulative_valid_only = cumulative_valid
                                                     
-                                                    # Calcular métricas de validação
-                                                    # 1. RETORNO TOTAL E ANUALIZADO
-                                                    retorno_total_valid = cumulative_valid_only[-1] if len(cumulative_valid_only) > 0 else 0
-                                                    n_dias_valid = len(returns_valid_only)
-                                                    
-                                                    # Anualizar retorno (importante para Sharpe/Sortino)
-                                                    if n_dias_valid > 0:
-                                                        annual_return_valid = (1 + retorno_total_valid) ** (252/n_dias_valid) - 1
+                                                    # ✅ CALCULAR MÉTRICAS DE VALIDAÇÃO - METODOLOGIA BASE 0 CORRIGIDA
+
+                                                    # ADICIONAR ESTA LINHA NO INÍCIO:
+                                                    returns_valid_only = portfolio_returns_valid[n_dias_otim:]  # Retornos diários do período
+                                                    n_dias_valid = len(returns_valid_only)  # ← ADICIONAR ESTA LINHA
+
+                                                    # 1. RETORNO DO PORTFÓLIO - CRESCIMENTO RELATIVO (BASE 0)
+                                                    # Retorno acumulado desde início até fim da validação
+                                                    portfolio_total_ate_validacao = cumulative_valid[-1]  # Último ponto da curva completa
+
+                                                    # Retorno acumulado desde início até fim da otimização
+                                                    portfolio_total_ate_otimizacao = cumulative_valid[n_dias_otim-1]  # Ponto no fim da otimização
+
+                                                    # Crescimento no período de validação (base 0)
+                                                    retorno_total_valid = (1 + portfolio_total_ate_validacao) / (1 + portfolio_total_ate_otimizacao) - 1
+
+                                                    # Anualizar usando dias corridos
+                                                    if dias_valid > 0:
+                                                        annual_return_valid = (1 + retorno_total_valid) ** (365/dias_valid) - 1
                                                     else:
                                                         annual_return_valid = 0
-                                                    
-                                                    # 2. VOLATILIDADE ANUALIZADA
+
+                                                    # 2. VOLATILIDADE ANUALIZADA (permanece igual)
+                                                    returns_valid_only = portfolio_returns_valid[n_dias_otim:]
                                                     vol_valid = np.std(returns_valid_only, ddof=0) * np.sqrt(252) if len(returns_valid_only) > 0 else 0
-                                                    
-                                                    # 3. TAXA LIVRE DE RISCO DO PERÍODO DE VALIDAÇÃO
-                                                    # Opção A: Se temos coluna de taxa livre nos dados
-                                                    if hasattr(optimizer_valid, 'risk_free_returns') and optimizer_valid.risk_free_returns is not None:
+
+                                                    # 3. TAXA LIVRE DE RISCO - CRESCIMENTO RELATIVO (BASE 0)
+                                                    if hasattr(optimizer_valid, 'risk_free_cumulative') and optimizer_valid.risk_free_cumulative is not None:
                                                         try:
-                                                            # Pegar apenas o período de validação da taxa livre
-                                                            if len(optimizer_valid.risk_free_returns) > n_dias_otim:
-                                                                risk_free_valid_only = optimizer_valid.risk_free_returns.iloc[n_dias_otim:].values
-                                                                risk_free_total_valid = np.sum(risk_free_valid_only)
-                                                                
-                                                                # Anualizar a taxa livre
-                                                                if n_dias_valid > 0:
-                                                                    risk_free_annual_valid = (1 + risk_free_total_valid) ** (252/n_dias_valid) - 1
-                                                                else:
-                                                                    risk_free_annual_valid = 0
+                                                            # Taxa acumulada desde início até fim da validação
+                                                            risk_free_total_ate_validacao = optimizer_valid.risk_free_cumulative.iloc[-1]
+                                                            
+                                                            # Taxa acumulada desde início até fim da otimização  
+                                                            risk_free_total_ate_otimizacao = optimizer_valid.risk_free_cumulative.iloc[n_dias_otim-1]
+                                                            
+                                                            # Crescimento no período de validação (base 0)
+                                                            risk_free_total_valid = (1 + risk_free_total_ate_validacao) / (1 + risk_free_total_ate_otimizacao) - 1
+                                                            
+                                                            # Anualizar usando dias corridos
+                                                            if dias_valid > 0:
+                                                                risk_free_annual_valid = (1 + risk_free_total_valid) ** (365/dias_valid) - 1
                                                             else:
-                                                                # Não há dados suficientes, estimar
-                                                                st.warning("⚠️ Taxa livre: estimando para período de validação")
-                                                                risk_free_annual_valid = final_risk_free_rate * (252/n_dias_otim) if n_dias_otim > 0 else 0
-                                                        except:
+                                                                risk_free_annual_valid = 0
+                                                                
+                                                        except Exception as e:
+                                                            st.warning(f"⚠️ Erro ao calcular taxa livre: {str(e)}")
                                                             risk_free_annual_valid = 0
-                                                    
+
                                                     # Opção B: Taxa livre manual ou estimada
                                                     else:
                                                         # Se temos uma taxa acumulada do período de otimização
-                                                        # Precisamos estimar a taxa anual e aplicar ao período de validação
-                                                        if final_risk_free_rate > 0 and n_dias_otim > 0:
-                                                            # Converter taxa acumulada em taxa anual
-                                                            taxa_anual_base = (1 + final_risk_free_rate) ** (252/n_dias_otim) - 1
-                                                            risk_free_annual_valid = taxa_anual_base
+                                                        if final_risk_free_rate > 0 and dias_valid > 0:
+                                                            # Estimar crescimento proporcional
+                                                            periodo_otim_dias = (data_fim_otim - data_inicio_otim).days
+                                                            if periodo_otim_dias > 0:
+                                                                # Taxa anual base
+                                                                taxa_anual_base = (1 + final_risk_free_rate) ** (365/periodo_otim_dias) - 1
+                                                                # Aplicar ao período de validação
+                                                                risk_free_annual_valid = taxa_anual_base
+                                                            else:
+                                                                risk_free_annual_valid = 0
                                                         else:
                                                             risk_free_annual_valid = 0
                                                     
@@ -1672,7 +1690,7 @@ if dados_brutos is not None:
                                                             st.markdown("**Retornos:**")
                                                             st.write(f"• Total: {retorno_total_valid:.2%}")
                                                             st.write(f"• Anualizado: {annual_return_valid:.2%}")
-                                                            st.write(f"• Dias: {n_dias_valid}")
+                                                            st.write(f"• Dias: {dias_valid}")
                                                         
                                                         with col_debug2:
                                                             st.markdown("**Risco:**")
@@ -1689,7 +1707,7 @@ if dados_brutos is not None:
                                                     
                                                     with col1:
                                                         st.metric("📈 Retorno Total", f"{retorno_total_valid:.2%}",
-                                                                help=f"Retorno acumulado dos {n_dias_valid} dias de validação")
+                                                                help=f"Retorno acumulado dos {dias_valid} dias de validação")
                                                     with col2:
                                                         st.metric("📅 Retorno Anual", f"{annual_return_valid:.2%}",
                                                                 help="Retorno anualizado do período de validação")
@@ -1909,12 +1927,12 @@ if dados_brutos is not None:
                                                     st.success(f"🎯 **Período de Otimização:** {n_dias_otim} dias")
                                                 
                                                 with col_graf2:
-                                                    dias_validacao = len(metrics_extended['portfolio_cumulative']) - n_dias_otim
+                                                    dias_validacao = dias_valid
                                                     st.info(f"🔍 **Período de Validação:** {dias_validacao} dias")
                                                 
                                                 with col_graf3:
                                                     total_dias = len(metrics_extended['portfolio_cumulative'])
-                                                    st.metric("📊 Total de Dias", f"{total_dias}")
+                                                    st.metric("📊 Total de Registros", f"{total_dias}")
                                                 
                                                 # 9. NOTA EXPLICATIVA
                                                 st.caption("💡 Este gráfico mostra a evolução completa do portfólio, destacando visualmente onde termina o treino e começa a validação")
