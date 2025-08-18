@@ -204,7 +204,7 @@ def processar_periodo_selecionado(df_bruto, data_inicio, data_fim, data_analise=
     except Exception as e:
         st.error(f"Erro ao processar período: {str(e)}")
         return None, None, []
-    
+
 def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_returns=None):
     """
     Cria tabela de retornos mensais do portfólio otimizado
@@ -234,19 +234,13 @@ def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_re
     # 1. Agrupar por mês e pegar o ÚLTIMO valor de cada mês
     monthly_cumulative = portfolio_df['cumulative'].resample('M').last()
     
-    # 2. Calcular retornos mensais em PERCENTUAIS
+    # 2. Calcular retornos mensais usando METODOLOGIA BASE 0
     monthly_returns = []
     previous_cumulative = 0  # Começar do zero (base 0)
-
+    
     for month_date, current_cumulative in monthly_cumulative.items():
-        # ✅ NOVO: Retorno percentual do mês
-        if previous_cumulative != 0:
-            # Crescimento relativo: (novo - antigo) / (1 + antigo)
-            monthly_return = (current_cumulative - previous_cumulative) / (1 + previous_cumulative)
-        else:
-            # Primeiro mês: retorno direto da base 0
-            monthly_return = current_cumulative
-        
+        # Retorno do mês = variação na base 0
+        monthly_return = current_cumulative - previous_cumulative
         monthly_returns.append(monthly_return)
         previous_cumulative = current_cumulative
     
@@ -303,18 +297,13 @@ def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_re
     
     # ========== CALCULAR TOTAL ANUAL CORRIGIDO ==========
     
-    # ========== CALCULAR TOTAL ANUAL CORRIGIDO ==========
-
-    # ✅ NOVA METODOLOGIA: Multiplicação composta dos retornos percentuais
+    # NOVA METODOLOGIA: Somar retornos mensais (base 0)
     yearly_returns = []
     for year in pivot_table.index:
         year_data = pivot_table.loc[year].dropna()
         if len(year_data) > 0:
-            # Para percentuais: multiplicação composta (1+r1)*(1+r2)*...*(1+rn) - 1
-            annual_return = 1.0
-            for monthly_return in year_data:
-                annual_return *= (1 + monthly_return)
-            annual_return -= 1  # Subtrair 1 para ter o ganho líquido
+            # Para base 0: soma simples dos retornos mensais
+            annual_return = year_data.sum()
             yearly_returns.append(annual_return)
         else:
             yearly_returns.append(np.nan)
@@ -835,6 +824,14 @@ with st.sidebar:
                     else:
                         st.error("❌ Nenhum dado encontrado. Verifique os símbolos.")
                         
+# Link para Google Drive
+    st.markdown("---")
+    st.markdown(
+        "📂 **Baixar mais dados:**\n\n"
+        "[Pasta no Google Drive]"
+        "(https://drive.google.com/drive/folders/1t8EcZZqGqPIH3pzZ-DdBytrr3Rb1TuwV?usp=sharing)"
+    )
+
 # ÁREA PRINCIPAL - NOVO FLUXO COM JANELAS TEMPORAIS
 # Verificar se há dados brutos carregados
 dados_brutos = st.session_state.get('dados_brutos', None)
@@ -845,7 +842,7 @@ if dados_brutos is not None:
     periodo_disp = st.session_state.get('periodo_disponivel', None)
     
     # Header com informações
-    col_info1, col_info2, col_download, col_clear = st.columns([3, 3, 1, 1])
+    col_info1, col_info2, col_info3 = st.columns([2, 2, 1])
     
     with col_info1:
         st.success(f"✅ **Dados Carregados:** {fonte}")
@@ -854,69 +851,8 @@ if dados_brutos is not None:
         if periodo_disp:
             st.info(f"📅 **Período Disponível:** {periodo_disp['inicio'].strftime('%d/%m/%Y')} a {periodo_disp['fim'].strftime('%d/%m/%Y')} ({periodo_disp['total_dias']} dias)")
     
-    with col_download:
-        # Função para converter DataFrame para Excel
-        def convert_to_excel(df):
-            from io import BytesIO
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                # Adicionar planilha principal com dados
-                df.to_excel(writer, index=False, sheet_name='Dados')
-                
-                # Adicionar planilha com metadados
-                metadata = pd.DataFrame({
-                    'Informação': ['Fonte dos Dados', 'Data do Download', 'Período Início', 'Período Fim', 'Total de Dias', 'Total de Ativos'],
-                    'Valor': [
-                        fonte,
-                        datetime.now().strftime('%d/%m/%Y %H:%M:%S'),
-                        periodo_disp['inicio'].strftime('%d/%m/%Y') if periodo_disp else 'N/A',
-                        periodo_disp['fim'].strftime('%d/%m/%Y') if periodo_disp else 'N/A',
-                        str(periodo_disp['total_dias']) if periodo_disp else 'N/A',
-                        str(len(df.columns) - 1)  # -1 para excluir coluna Data
-                    ]
-                })
-                metadata.to_excel(writer, index=False, sheet_name='Metadados')
-                
-                # Adicionar planilha com instruções
-                instrucoes = pd.DataFrame({
-                    'Como usar este arquivo': [
-                        '1. Este arquivo contém dados históricos de ativos financeiros',
-                        '2. A primeira coluna deve sempre ser "Data"',
-                        '3. A segunda coluna pode ser uma taxa de referência (opcional)',
-                        '4. As demais colunas são os ativos para análise',
-                        '5. Use este arquivo como template para seus próprios dados',
-                        '6. Faça upload deste arquivo no Otimizador de Portfólio',
-                        '',
-                        'Estrutura esperada:',
-                        'Data | Taxa_Ref | Ativo1 | Ativo2 | Ativo3 | ...',
-                        '',
-                        'Dica: A taxa de referência é detectada automaticamente',
-                        'se contiver as palavras: taxa, livre, risco, ref, cdi, selic'
-                    ]
-                })
-                instrucoes.to_excel(writer, index=False, sheet_name='Instruções')
-                
-            return output.getvalue()
-        
-        try:
-            excel_data = convert_to_excel(dados_brutos)
-            
-            # Nome do arquivo com timestamp
-            filename = f"portfolio_data_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
-            
-            st.download_button(
-                label="💾 Baixar",
-                data=excel_data,
-                file_name=filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                help="Baixar dados para uso posterior",
-                use_container_width=True
-            )
-        except Exception as e:
-            st.error(f"Erro ao preparar download: {str(e)}")
-    
-    with col_clear:
-        if st.button("🔄 Limpar", use_container_width=True, help="Limpar todos os dados carregados"):
+    with col_info3:
+        if st.button("🔄 Limpar Dados", use_container_width=True):
             for key in ['dados_brutos', 'fonte_dados', 'periodo_disponivel', 'df', 'df_analise']:
                 if key in st.session_state:
                     del st.session_state[key]
@@ -2180,6 +2116,14 @@ else:
             "2. **Crie a pasta** `sample_data/` no seu repositório\n\n"
             "3. **Faça upload** dos arquivos Excel de exemplo"
         )
+    
+    # Link para download dos dados
+    st.markdown("### 📂 Dados Disponíveis")
+    st.markdown(
+        "**Baixe planilhas com dados históricos de ativos:**\n\n"
+        "🔗 [Acessar pasta no Google Drive](https://drive.google.com/drive/folders/1t8EcZZqGqPIH3pzZ-DdBytrr3Rb1TuwV?usp=sharing)"
+    )
+    st.markdown("---")
     
     # Instruções
     st.markdown("""
