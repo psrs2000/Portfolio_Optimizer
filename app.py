@@ -93,7 +93,7 @@ def calculate_asset_ranking(df_base_zero, risk_free_column=None):
                 # Desvio padrão das diferenças
                 std_dev = df_diferenca[f"{asset}_diff"].std()
                 
-                all_slopes.append(abs(slope))  # Valor absoluto para normalização
+                all_slopes.append(slope)  # Valor para normalização
                 all_deviations.append(std_dev)
                 
             except Exception as e:
@@ -120,7 +120,7 @@ def calculate_asset_ranking(df_base_zero, risk_free_column=None):
                 std_dev = df_diferenca[f"{asset}_diff"].std()
                 
                 # NORMALIZAÇÃO
-                slope_norm = abs(slope) / max_slope if max_slope > 0 else 0
+                slope_norm = slope / max_slope if max_slope > 0 else 0
                 std_dev_norm = std_dev / max_deviation if max_deviation > 0 else 0
                 
                 # NOVA FÓRMULA NORMALIZADA
