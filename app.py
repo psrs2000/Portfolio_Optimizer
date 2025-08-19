@@ -6,6 +6,245 @@ import plotly.graph_objects as go
 from optimizer import PortfolioOptimizer
 import yfinance as yf
 from datetime import datetime, timedelta
+from scipy import stats
+
+# =============================================================================
+# FUNÇÕES PARA RANKING DE ATIVOS (NOVO!)
+# =============================================================================
+
+def calculate_asset_ranking(df_base_zero, risk_free_column=None):
+    """
+    Calcula ranking de ativos baseado em 4 parâmetros:
+    1. R² (Integral vs Data)
+    2. Inclinação (Integral vs Data) 
+    3. Desvio Padrão (Diferença)
+    4. Correlação (Integral vs Data)
+    
+    Fórmula: Índice = (Inclinacao_norm × Correlação) / [(1 - R²) × Desvio_norm]
+    """
+    try:
+        # Identificar colunas
+        if 'Data' in df_base_zero.columns:
+            df_work = df_base_zero.copy()
+            dates_col = pd.to_datetime(df_work['Data'])
+            
+            # Identificar coluna de referência (taxa livre de risco)
+            if risk_free_column and risk_free_column in df_work.columns:
+                ref_col = risk_free_column
+                asset_columns = [col for col in df_work.columns if col not in ['Data', risk_free_column]]
+            elif len(df_work.columns) > 2:
+                # Assumir segunda coluna como referência se contém palavras-chave
+                second_col = df_work.columns[1]
+                if any(term in second_col.lower() for term in ['taxa', 'livre', 'risco', 'ibov', 'ref', 'cdi', 'selic']):
+                    ref_col = second_col
+                    asset_columns = [col for col in df_work.columns if col not in ['Data', second_col]]
+                else:
+                    st.warning("⚠️ Coluna de referência não detectada. Usando primeira coluna de ativo.")
+                    ref_col = df_work.columns[1]
+                    asset_columns = df_work.columns[2:].tolist()
+            else:
+                st.error("❌ Necessário pelo menos 3 colunas: Data, Referência, Ativo")
+                return None
+        else:
+            st.error("❌ Coluna 'Data' não encontrada")
+            return None
+        
+        # ===============================
+        # PASSO 1: CRIAR ABA "DIFERENÇA"
+        # ===============================
+        diferenca_data = {}
+        diferenca_data['Data'] = dates_col
+        
+        for asset in asset_columns:
+            # Cada ativo - referência (linha por linha)
+            diferenca_data[f"{asset}_diff"] = df_work[asset] - df_work[ref_col]
+        
+        df_diferenca = pd.DataFrame(diferenca_data)
+        
+        # ===============================
+        # PASSO 2: CRIAR ABA "INTEGRAL" 
+        # ===============================
+        integral_data = {}
+        integral_data['Data'] = dates_col
+        
+        for asset in asset_columns:
+            # Soma acumulada das diferenças
+            integral_data[f"{asset}_integral"] = df_diferenca[f"{asset}_diff"].cumsum()
+        
+        df_integral = pd.DataFrame(integral_data)
+        
+        # ===============================
+        # PASSO 3: CALCULAR 4 PARÂMETROS
+        # ===============================
+        rankings = []
+        all_slopes = []
+        all_deviations = []
+        
+        # Primeira passada: coletar todas as inclinações e desvios para normalização
+        for asset in asset_columns:
+            try:
+                # Dados para regressão (x = índice numérico das datas, y = integral)
+                x_data = np.arange(len(df_integral))
+                y_data = df_integral[f"{asset}_integral"].values
+                
+                # Calcular regressão linear
+                slope, intercept, r_value, p_value, std_err = stats.linregress(x_data, y_data)
+                
+                # Desvio padrão das diferenças
+                std_dev = df_diferenca[f"{asset}_diff"].std()
+                
+                all_slopes.append(slope)  # Valor absoluto para normalização
+                all_deviations.append(std_dev)
+                
+            except Exception as e:
+                print(f"Erro ao calcular parâmetros para {asset}: {e}")
+                continue
+        
+        # Encontrar máximos para normalização
+        max_slope = max(all_slopes) if all_slopes else 1
+        max_deviation = max(all_deviations) if all_deviations else 1
+        
+        # Segunda passada: calcular índices com normalização
+        for asset in asset_columns:
+            try:
+                # Dados para regressão
+                x_data = np.arange(len(df_integral))
+                y_data = df_integral[f"{asset}_integral"].values
+                
+                # Calcular regressão linear
+                slope, intercept, r_value, p_value, std_err = stats.linregress(x_data, y_data)
+                r_squared = r_value ** 2
+                correlation = r_value
+                
+                # Desvio padrão das diferenças
+                std_dev = df_diferenca[f"{asset}_diff"].std()
+                
+                # NORMALIZAÇÃO
+                slope_norm = slope / max_slope if max_slope > 0 else 0
+                std_dev_norm = std_dev / max_deviation if max_deviation > 0 else 0
+                
+                # NOVA FÓRMULA COM PESOS PERSONALIZÁVEIS
+                if slope > 0:  # Só eliminar se inclinação for negativa
+                    # Garantir que correlação está entre 0 e 1 (valor absoluto)
+                    correlation_norm = abs(correlation)
+                    
+                    # Pegar pesos do session_state (ou usar padrões)
+                    p_inc = st.session_state.get('peso_inclinacao', 0.33)
+                    p_desv = st.session_state.get('peso_desvio', 0.33)
+                    p_cor = st.session_state.get('peso_correlacao', 0.33)
+                    
+                    # Nova fórmula: [P_inc×Inclinação + P_desv×(1-Desvio) + P_cor×Correlação] / (P_inc+P_desv+P_cor)
+                    numerador = (p_inc * slope_norm + 
+                               p_desv * (1 - std_dev_norm) + 
+                               p_cor * correlation_norm)
+                    denominador = p_inc + p_desv + p_cor
+                    
+                    indice = numerador / denominador if denominador > 0 else 0
+                else:
+                    indice = 0  # Inclinação negativa = 0
+                
+                rankings.append({
+                    'Ativo': asset,
+                    'Inclinação': slope,
+                    'Inclinação_Norm': slope_norm,
+                    'R²': r_squared,
+                    'Correlação': correlation,
+                    'Desvio_Padrão': std_dev,
+                    'Desvio_Norm': std_dev_norm,
+                    'Índice': indice
+                })
+                
+            except Exception as e:
+                print(f"Erro ao processar {asset}: {e}")
+                rankings.append({
+                    'Ativo': asset,
+                    'Inclinação': 0,
+                    'Inclinação_Norm': 0,
+                    'R²': 0,
+                    'Correlação': 0,
+                    'Desvio_Padrão': 0,
+                    'Desvio_Norm': 0,
+                    'Índice': 0
+                })
+        
+        # Criar DataFrame e ordenar por índice
+        df_ranking = pd.DataFrame(rankings)
+        df_ranking = df_ranking.sort_values('Índice', ascending=False).reset_index(drop=True)
+        df_ranking['Posição'] = range(1, len(df_ranking) + 1)
+        
+        return {
+            'ranking': df_ranking,
+            'diferenca': df_diferenca,
+            'integral': df_integral,
+            'referencia': ref_col,
+            'total_ativos': len(asset_columns)
+        }
+        
+    except Exception as e:
+        st.error(f"❌ Erro no cálculo do ranking: {str(e)}")
+        return None
+
+def display_ranking_results(ranking_result):
+    """
+    Exibe os resultados do ranking de forma organizada
+    """
+    if ranking_result is None:
+        return
+    
+    df_ranking = ranking_result['ranking']
+    referencia = ranking_result['referencia']
+    total_ativos = ranking_result['total_ativos']
+    
+    # Cabeçalho
+    st.subheader("🏆 Ranking de Ativos")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("📊 Total de Ativos", total_ativos)
+    with col2:
+        st.metric("🛡️ Referência", referencia)
+    with col3:
+        top_asset = df_ranking.iloc[0]['Ativo'] if len(df_ranking) > 0 else "N/A"
+        st.metric("🥇 Melhor Ativo", top_asset)
+    
+    # Tabela principal (Top 10) - RECOLHIDA POR PADRÃO
+    with st.expander("📋 Ver Top 10 Ativos", expanded=False):
+        # Preparar dados para exibição
+        display_df = df_ranking.head(10).copy()
+        
+        # Formatar colunas para melhor visualização
+        display_df['R²'] = display_df['R²'].apply(lambda x: f"{x:.3f}")
+        display_df['Correlação'] = display_df['Correlação'].apply(lambda x: f"{x:.3f}")
+        display_df['Inclinação_Norm'] = display_df['Inclinação_Norm'].apply(lambda x: f"{x:.3f}")
+        display_df['Desvio_Norm'] = display_df['Desvio_Norm'].apply(lambda x: f"{x:.3f}")
+        display_df['Índice'] = display_df['Índice'].apply(lambda x: f"{x:.4f}")
+        
+        # Selecionar colunas para exibição
+        columns_to_show = ['Posição', 'Ativo', 'Índice', 'Inclinação_Norm', 'R²', 'Correlação', 'Desvio_Norm']
+        
+        st.dataframe(
+            display_df[columns_to_show], 
+            use_container_width=True,
+            hide_index=True
+        )
+    
+    # Expandir com tabela completa
+    with st.expander(f"📊 Ver ranking completo ({len(df_ranking)} ativos)", expanded=False):
+        # Mostrar todas as colunas na versão completa
+        full_display_df = df_ranking.copy()
+        full_display_df['R²'] = full_display_df['R²'].apply(lambda x: f"{x:.3f}")
+        full_display_df['Correlação'] = full_display_df['Correlação'].apply(lambda x: f"{x:.3f}")
+        full_display_df['Inclinação_Norm'] = full_display_df['Inclinação_Norm'].apply(lambda x: f"{x:.3f}")
+        full_display_df['Desvio_Norm'] = full_display_df['Desvio_Norm'].apply(lambda x: f"{x:.3f}")
+        full_display_df['Índice'] = full_display_df['Índice'].apply(lambda x: f"{x:.4f}")
+        
+        st.dataframe(
+            full_display_df[columns_to_show],
+            use_container_width=True,
+            hide_index=True
+        )
+    
+    return df_ranking
 
 # =============================================================================
 # FUNÇÕES PARA INTEGRAÇÃO COM YAHOO FINANCE
@@ -1036,6 +1275,157 @@ if dados_brutos is not None:
     df_analise = st.session_state.get('df_analise', None)
     
     if df is not None:
+
+        # NOVA SEÇÃO: RANKING DE ATIVOS (FASE 1)
+        #st.header("🏆 Ranking de Ativos (NOVO!)")
+        
+        # Checkbox para ativar ranking
+        use_ranking = st.checkbox(
+            "🤖 Ativar ranking automático de ativos",
+            help="Calcula índice de qualidade para cada ativo baseado em 4 parâmetros"
+        )
+        
+        ranking_result = None
+        
+        if use_ranking:
+            with st.spinner("🧮 Calculando ranking dos ativos..."):
+                # Calcular ranking baseado nos dados de otimização
+                ranking_result = calculate_asset_ranking(df)
+                
+                if ranking_result is not None:
+                    # Exibir resultados
+                    top_assets_df = display_ranking_results(ranking_result)
+                    
+                    # Salvar no session_state para uso posterior
+                    st.session_state['ranking_result'] = ranking_result
+                    
+                    st.success("✅ Ranking calculado com sucesso!")
+
+                    # NOVA SEÇÃO: Configuração de pesos
+                    with st.expander("⚙️ Configurar pesos dos parâmetros", expanded=False):
+                        st.markdown("**Personalize a importância de cada fator no ranking:**")
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            p_inc = st.slider(
+                                "📈 Peso Inclinação", 
+                                min_value=0.0, 
+                                max_value=1.0, 
+                                value=st.session_state.get('peso_inclinacao', 0.33),
+                                step=0.05,
+                                help="Importância do crescimento/tendência"
+                            )
+                        
+                        with col2:
+                            p_desv = st.slider(
+                                "📊 Peso Desvio Padrão", 
+                                min_value=0.0, 
+                                max_value=1.0, 
+                                value=st.session_state.get('peso_desvio', 0.33),
+                                step=0.05,
+                                help="Importância da baixa volatilidade"
+                            )
+                        
+                        with col3:
+                            p_cor = st.slider(
+                                "🎯 Peso Correlação", 
+                                min_value=0.0, 
+                                max_value=1.0, 
+                                value=st.session_state.get('peso_correlacao', 0.33),
+                                step=0.05,
+                                help="Importância da consistência linear"
+                            )
+                        
+                        # Atualizar session_state
+                        st.session_state['peso_inclinacao'] = p_inc
+                        st.session_state['peso_desvio'] = p_desv
+                        st.session_state['peso_correlacao'] = p_cor
+                        
+                        # Mostrar soma dos pesos
+                        total_pesos = p_inc + p_desv + p_cor
+                        if total_pesos > 0:
+                            st.info(f"💡 **Distribuição:** Inclinação {p_inc/total_pesos*100:.0f}% | Estabilidade {p_desv/total_pesos*100:.0f}% | Correlação {p_cor/total_pesos*100:.0f}%")
+                        
+                        # Botão para recalcular
+                        if st.button("🔄 Recalcular Ranking", help="Aplicar novos pesos ao ranking"):
+                            st.rerun()
+
+# NOVA FUNCIONALIDADE: Seleção automática
+                    st.markdown("---")
+                    st.subheader("🎯 Seleção Automática de Ativos")
+                    
+                    col1, col2, col3 = st.columns([1.5, 1.5, 1])
+
+                    with col1:
+                        score_min = st.number_input(
+                            "📉 Score mínimo:",
+                            min_value=0.0,
+                            max_value=1.0,
+                            value=0.7,
+                            step=0.05,
+                            help="Score mínimo para seleção (0 a 1)"
+                        )
+
+                    with col2:
+                        score_max = st.number_input(
+                            "📈 Score máximo:",
+                            min_value=0.0,
+                            max_value=1.0,
+                            value=1.0,
+                            step=0.05,
+                            help="Score máximo para seleção (0 a 1)"
+                        )
+
+                    with col3:
+                        st.markdown("<br>", unsafe_allow_html=True)  # Espaço para alinhar com os inputs
+                        auto_select_btn = st.button(
+                            "✅ Selecionar Top Ativos", 
+                            type="primary",
+                            use_container_width=True,
+                            help="Aplica seleção automática baseada no ranking"
+                        )
+                    
+                    # Processar seleção automática
+                    if auto_select_btn:
+                        # Validar range
+                        if score_min > score_max:
+                            st.error("❌ Score mínimo deve ser menor que o máximo!")
+                        else:
+                            # Filtrar ativos por range de score
+                            filtered_ranking = ranking_result['ranking'][
+                                (ranking_result['ranking']['Índice'] >= score_min) & 
+                                (ranking_result['ranking']['Índice'] <= score_max)
+                            ]
+                            top_assets = filtered_ranking['Ativo'].tolist()
+                            
+                            if len(top_assets) == 0:
+                                st.warning(f"⚠️ Nenhum ativo encontrado no range {score_min:.2f} - {score_max:.2f}")
+                                top_assets = []
+                        
+                        # Salvar seleção automática no session_state
+                        st.session_state['selected_assets_auto'] = top_assets
+                        st.session_state['auto_selection_active'] = True
+                        st.session_state['score_range_selected'] = (score_min, score_max)
+                        
+                        if len(top_assets) > 0:
+                            st.success(f"🎉 {len(top_assets)} ativos selecionados no range {score_min:.2f} - {score_max:.2f}!")
+                            
+                            # Mostrar estatísticas do range
+                            if len(filtered_ranking) > 0:
+                                avg_score = filtered_ranking['Índice'].mean()
+                                st.info(f"📊 Score médio dos selecionados: {avg_score:.3f}")
+                        
+                        # Mostrar lista dos ativos selecionados
+                        with st.expander("👀 Ver ativos selecionados", expanded=False):
+                            selected_df = filtered_ranking[['Posição', 'Ativo', 'Índice']].copy()
+                            selected_df['Índice'] = selected_df['Índice'].apply(lambda x: f"{x:.4f}")
+                            st.dataframe(selected_df, use_container_width=True, hide_index=True)
+                        
+                        st.info("👇 Agora vá para a seção de otimização abaixo!")
+
+                else:
+                    st.error("❌ Erro ao calcular ranking")
         # Tabs para visualizar dados
         tab_otim, tab_valid = st.tabs(["📊 Dados de Otimização", "🔍 Dados de Validação"])
         
@@ -1076,19 +1466,41 @@ if dados_brutos is not None:
         else:
             asset_columns = df.columns.tolist()
         
-        # Seleção de ativos
-        selected_assets = st.multiselect(
-            "🔍 Selecione os ativos para otimização:",
-            options=asset_columns,
-            default=asset_columns[:min(300, len(asset_columns))],  # Selecionar até 300 por padrão
-            help="Mínimo 2 ativos",
-            placeholder="Escolha os ativos..."
-        )
+        # Verificar se há seleção automática ativa
+        auto_selection_active = st.session_state.get('auto_selection_active', False)
+        selected_assets_auto = st.session_state.get('selected_assets_auto', [])
+        
+        if auto_selection_active and selected_assets_auto:
+            # MODO AUTOMÁTICO: Aparecer como se fosse seleção manual normal
+            selected_assets = st.multiselect(
+                "🎯 Selecione os ativos para otimização:",
+                options=asset_columns,
+                default=selected_assets_auto,  # ← Usar os ativos do ranking como padrão
+                help="Mínimo 2 ativos (selecionados automaticamente pelo ranking)",
+                placeholder="Ativos selecionados pelo ranking..."
+            )
+            
+            # Botão discreto para resetar
+            if st.button("🔄 Resetar seleção automática", help="Voltar ao modo manual normal"):
+                st.session_state['auto_selection_active'] = False
+                st.session_state['selected_assets_auto'] = []
+                st.rerun()
+            
+        else:
+            # MODO MANUAL: Seleção tradicional
+            selected_assets = st.multiselect(
+                "🎯 Selecione os ativos para otimização:",
+                options=asset_columns,
+                default=asset_columns[:min(250, len(asset_columns))],
+                help="Mínimo 2 ativos",
+                placeholder="Escolha os ativos..."
+            )
         
         if len(selected_assets) < 2:
             st.warning("⚠️ Selecione pelo menos 2 ativos para otimização")
         else:
-            st.success(f"✅ {len(selected_assets)} ativos selecionados")
+            mode_text = "automática" if auto_selection_active else "manual"
+            st.success(f"✅ {len(selected_assets)} ativos selecionados ({mode_text})")
         
         # NOVA SEÇÃO: Short Selling / Hedge
         st.header("🔄 Posições Short / Hedge (Opcional)")
