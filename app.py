@@ -1,1628 +1,1314 @@
-import streamlit as st
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox, scrolledtext
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import os
+import sys
+from datetime import datetime
+
+# Importar sua classe original (sem modificações!)
 from optimizer import PortfolioOptimizer
-import yfinance as yf
-from datetime import datetime, timedelta
 
-# =============================================================================
-# FUNÇÕES PARA INTEGRAÇÃO COM YAHOO FINANCE
-# =============================================================================
-
-def buscar_dados_yahoo(simbolos, data_inicio, data_fim, sufixo=".SA"):
-    """
-    Busca dados do Yahoo Finance (adaptado do seu código)
-    """
-    dados_historicos = {}
-    simbolos_com_erro = []
-    
-    start_date = data_inicio.strftime('%Y-%m-%d')
-    end_date = data_fim.strftime('%Y-%m-%d')
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    for i, simbolo in enumerate(simbolos):
-        try:
-            status_text.text(f"Buscando {simbolo}... ({i+1}/{len(simbolos)})")
-            progress_bar.progress((i + 1) / len(simbolos))
-            
-            simbolo_completo = simbolo + sufixo if sufixo else simbolo
-            ticker = yf.Ticker(simbolo_completo)
-            hist = ticker.history(start=start_date, end=end_date, interval="1d")
-            
-            if not hist.empty and len(hist) > 5:  # Pelo menos 5 dias de dados
-                dados_historicos[simbolo] = hist
-            else:
-                simbolos_com_erro.append(simbolo)
-                
-        except Exception as e:
-            simbolos_com_erro.append(simbolo)
-    
-    progress_bar.empty()
-    status_text.empty()
-    
-    return dados_historicos, simbolos_com_erro
-
-def criar_consolidado_yahoo(dados_historicos):
-    """
-    Cria DataFrame consolidado com preços de fechamento
-    """
-    if not dados_historicos:
-        return None
-    
-    lista_dfs = []
-    
-    for simbolo, dados in dados_historicos.items():
-        if 'Close' in dados.columns and not dados['Close'].empty:
-            df_temp = pd.DataFrame({simbolo: dados['Close']})
-            
-            # Remove timezone se houver
-            if hasattr(df_temp.index, 'tz') and df_temp.index.tz is not None:
-                df_temp.index = df_temp.index.tz_localize(None)
-            
-            lista_dfs.append(df_temp)
-    
-    if lista_dfs:
-        dados_consolidados = pd.concat(lista_dfs, axis=1, sort=True)
-        dados_consolidados.index.name = "Data"
-        return dados_consolidados
-    
-    return None
-
-def transformar_base_zero(df_precos):
-    """
-    Transforma dados de preços para base 0 (adaptado do seu Base_0.py)
-    """
-    if df_precos is None or df_precos.empty:
-        return None, []
-    
-    df_limpo = df_precos.copy()
-    
-    # 1. Remove colunas com primeiro valor inválido
-    colunas_removidas = []
-    for coluna in df_limpo.columns:
-        if len(df_limpo[coluna]) == 0:
-            colunas_removidas.append(coluna)
-            continue
-            
-        primeiro_valor = df_limpo[coluna].iloc[0]
-        if pd.isna(primeiro_valor) or primeiro_valor == 0:
-            colunas_removidas.append(coluna)
-    
-    if colunas_removidas:
-        df_limpo = df_limpo.drop(columns=colunas_removidas)
-    
-    # Verifica se ainda há colunas válidas
-    if df_limpo.empty:
-        return None, colunas_removidas
-    
-    # 2. Preenche valores faltantes/zero (CORRIGIDO - sem method='ffill')
-    for coluna in df_limpo.columns:
-        df_limpo[coluna] = df_limpo[coluna].replace(0, np.nan)
-        df_limpo[coluna] = df_limpo[coluna].ffill()  # Novo método
-    
-    df_limpo = df_limpo.fillna(0)
-    
-    # 3. Calcula base zero
-    df_base_zero = pd.DataFrame(index=df_limpo.index)
-    
-    for coluna in df_limpo.columns:
-        valores = df_limpo[coluna].values
+class PortfolioOptimizerGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("📊 Otimizador de Portfólio - Versão Desktop Completa")
+        self.root.geometry("1400x900")
         
-        if len(valores) == 0:
-            continue
-            
-        cota_1 = valores[0]  # Primeiro valor como referência
+        # Variáveis de dados
+        self.df = None
+        self.optimizer = None
+        self.result = None
+        self.has_risk_free = False
+        self.risk_free_column_name = None
+        self.detected_risk_free_rate = 0.0
         
-        if cota_1 == 0:  # Evita divisão por zero
-            continue
+        # Variáveis para restrições individuais
+        self.individual_constraints = {}
+        self.constraint_widgets = {}
         
-        novos_valores = np.zeros(len(valores))
-        novos_valores[0] = 0.0  # Primeiro valor sempre 0
+        # Variáveis para short selling
+        self.short_weights = {}
+        self.short_widgets = {}
         
-        # Calcula os demais: (Preço_n - Preço_{n-1}) / Preço_1
-        for i in range(1, len(valores)):
-            cota_n = valores[i]
-            cota_anterior = valores[i-1]
-            novo_valor = (cota_n - cota_anterior) / cota_1
-            novos_valores[i] = novo_valor
+        # NOVO: Variáveis para tabelas mensais
+        self.monthly_table = None
+        self.excess_table = None
         
-        df_base_zero[coluna] = novos_valores
-    
-    return df_base_zero, colunas_removidas
-
-# Configuração da página
-st.set_page_config(
-    page_title="Otimizador de Portfólio",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# CSS customizado para o botão de ajuda
-st.markdown("""
-<style>
-    .help-button {
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        z-index: 999;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Inicializar session state para controle da ajuda
-if 'show_help' not in st.session_state:
-    st.session_state.show_help = False
-
-# Função para alternar ajuda
-def toggle_help():
-    st.session_state.show_help = not st.session_state.show_help
-
-# Título
-st.title("📊 Otimizador de Portfólio")
-col1, col2 = st.columns([6, 1])
-with col1:
-    st.markdown("*Baseado na metodologia de Markowitz*")
-with col2:
-    if st.button("📖 Ajuda", use_container_width=True, help="Clique para ver a documentação"):
-        toggle_help()
-
-# Mostrar documentação se solicitado
-if st.session_state.show_help:
-    with st.container():
-        st.markdown("---")
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["🚀 Início Rápido", "📊 Preparar Dados", "⚙️ Configurações", "📈 Resultados", "❓ FAQ"])
+        # Configurar interface
+        self.setup_ui()
         
-        with tab1:
-            st.markdown("""
-            ## 🚀 Guia de Início Rápido
-            
-            ### 3 Passos Simples:
-            
-            1. **📁 Carregue seus dados**
-               - Use o upload ou escolha um exemplo
-               - Formato: Excel com retornos diários
-            
-            2. **🎯 Configure a otimização**
-               - Selecione os ativos (mínimo 2)
-               - Escolha o objetivo (Sharpe, Sortino, etc.)
-               - Ajuste os limites de peso
-            
-            3. **🚀 Otimize!**
-               - Clique no botão "OTIMIZAR PORTFÓLIO"
-               - Analise os resultados
-               - Exporte ou ajuste conforme necessário
-            
-            ### 💡 Dica Rápida:
-            Para primeira vez, use os dados de exemplo e objetivo "Maximizar Sharpe Ratio"!
-            """)
+    def setup_ui(self):
+        """Criar interface do usuário"""
+        # Notebook para organizar abas
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill='both', expand=True, padx=10, pady=10)
         
-        with tab2:
-            st.markdown("""
-            ## 📊 Como Preparar seus Dados
-            
-            ### Formato da Planilha Excel:
-            
-            | Data | Taxa Ref (opcional) | Ativo 1 | Ativo 2 | ... |
-            |------|---------------------|---------|---------|-----|
-            | 01/01/2023 | 0.0005 | 0.0120 | -0.0050 | ... |
-            | 02/01/2023 | 0.0005 | -0.0030 | 0.0100 | ... |
-            
-            ### ⚠️ Importante:
-            - **Coluna A**: Datas (formato data)
-            - **Coluna B**: Taxa referência - CDI, IBOV, etc. (opcional)
-            - **Outras colunas**: Retornos diários em decimal
-            - **Exemplo**: 1.2% = 0.012 (não use 1.2)
-            
-            ### 📁 Dados de Exemplo Disponíveis:
-            - **Ações Brasileiras**: IBOV, blue chips
-            - **Fundos Imobiliários**: FIIs principais
-            - **ETFs**: Renda fixa e variável
-            - **Criptomoedas**: Bitcoin, Ethereum, etc.
-            
-            ### 🔍 Dica de Qualidade:
-            - Mínimo 1 ano de dados (252 dias úteis)
-            - Evite períodos com muitos feriados
-            - Verifique dados faltantes ou zerados
-            """)
+        # Aba 1: Carregar Dados
+        self.tab_data = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_data, text="📁 Dados")
+        self.setup_data_tab()
         
-        with tab3:
-            st.markdown("""
-            ## ⚙️ Configurações Detalhadas
-            
-            ### 🎯 Objetivos de Otimização:
-            
-            | Objetivo | Quando Usar | Característica |
-            |----------|-------------|----------------|
-            | **Sharpe Ratio** | Carteiras tradicionais | Retorno/Risco total |
-            | **Sortino Ratio** | Aversão a perdas | Penaliza só volatilidade negativa |
-            | **Minimizar Risco** | Perfil conservador | Menor volatilidade possível |
-            | **Maximizar Inclinação** | Tendência de alta | Crescimento mais consistente |
-            | **Inclinação/[(1-R²)×Vol]** | Crescimento estável | Combina tendência e previsibilidade |
-            
-            ### 📊 Limites de Peso:
-            
-            - **Peso Mínimo Global (0-20%)**
-              - 0% = Permite excluir ativos
-              - 5% = Garante diversificação mínima
-              - 10%+ = Força distribuição equilibrada
-            
-            - **Peso Máximo Global (5-100%)**
-              - 20% = Máxima diversificação
-              - 30% = Balanceado (recomendado)
-              - 50%+ = Permite concentração
-            
-            ### 🎯 Restrições Individuais:
-            
-            Use para casos específicos:
-            - **Travar posição**: Min = Max (ex: 15% = 15%)
-            - **Core holding**: Min alto (ex: Min 20%)
-            - **Limitar risco**: Max baixo (ex: Max 5%)
-            
-            ### 🔄 Posições Short/Hedge:
-            
-            - Permite vender ativos a descoberto
-            - Útil para hedge ou arbitragem
-            - Pesos negativos até -100%
-            - Não entram na soma de 100%
-            """)
+        # Aba 2: Configuração Básica
+        self.tab_config = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_config, text="⚙️ Configuração")
+        self.setup_config_tab()
         
-        with tab4:
-            st.markdown("""
-            ## 📈 Interpretando os Resultados
-            
-            ### 📊 Métricas Principais:
-            
-            | Métrica | O que significa | Valores de Referência |
-            |---------|-----------------|----------------------|
-            | **Retorno Total** | Ganho acumulado | Depende do período |
-            | **Retorno Anual** | Ganho anualizado | CDI + 2-5% = bom |
-            | **Volatilidade** | Risco anualizado | <10% = baixo, >20% = alto |
-            | **Sharpe Ratio** | Retorno/Risco | >1 = bom, >2 = ótimo |
-            | **Sortino Ratio** | Retorno/Risco negativo | Geralmente > Sharpe |
-            
-            ### 📉 Métricas de Risco:
-            
-            - **R²**: Previsibilidade (0-1)
-              - >0.8 = Alta linearidade
-              - <0.5 = Baixa previsibilidade
-            
-            - **VaR 95%**: Perda máxima diária
-              - -2% = Em 95% dos dias, não perde mais que 2%
-              
-            - **Downside Deviation**: Volatilidade das perdas
-              - Sempre ≤ Volatilidade total
-            
-            ### 📊 Composição Final:
-            
-            - Pesos otimizados somam 100%
-            - Ativos com peso <0.1% são omitidos
-            - Gráfico de pizza mostra distribuição visual
-            
-            ### 📈 Gráfico de Performance:
-            
-            - **Linha Azul**: Portfólio otimizado
-            - **Linha Laranja**: Taxa de referência (se houver)
-            - **Linha Verde**: Excesso de retorno
-            
-            ### 📅 Tabela Mensal:
-            
-            - Verde = Retorno positivo
-            - Vermelho = Retorno negativo
-            - Total Anual = Performance do ano
-            """)
+        # Aba 3: Restrições Avançadas
+        self.tab_advanced = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_advanced, text="🔧 Avançado")
+        self.setup_advanced_tab()
         
-        with tab5:
-            st.markdown("""
-            ## ❓ Perguntas Frequentes
-            
-            ### Por que meu ativo favorito ficou com 0%?
-            O otimizador busca a melhor combinação matemática. Ativos podem receber 0% se:
-            - Têm baixo retorno ajustado ao risco
-            - São muito correlacionados com outros
-            - Têm volatilidade muito alta
-            
-            **Solução**: Use restrições individuais para garantir alocação mínima.
-            
-            ### Sharpe ou Sortino - qual usar?
-            - **Sharpe**: Tradicional, penaliza toda volatilidade
-            - **Sortino**: Moderno, penaliza só volatilidade negativa
-            
-            **Recomendação**: Sortino é geralmente melhor para investidores reais.
-            
-            ### Quantos ativos incluir?
-            - **Mínimo**: 2 ativos (obrigatório)
-            - **Ideal**: 5-15 ativos
-            - **Máximo prático**: 20-30 ativos
-            
-            ### Como usar posições short?
-            1. Selecione ativos para otimização normal
-            2. Ative "Posições Short/Hedge"
-            3. Escolha ativos para vender
-            4. Defina pesos negativos
-            
-            ### A otimização é garantida?
-            **NÃO!** A otimização é baseada em dados históricos. Use como guia, considerando:
-            - Mudanças de cenário
-            - Custos de transação
-            - Liquidez dos ativos
-            - Seu perfil de risco
-            
-            ### Como exportar os resultados?
-            - Screenshot da tela
-            - Copie os valores da tabela
-            - Print do gráfico (botão de câmera no Plotly)
-            
-            ### Posso confiar 100% nos resultados?
-            Não. Esta é uma ferramenta de apoio à decisão. Sempre:
-            - Revise os resultados criticamente
-            - Considere fatores não quantitativos
-            - Consulte um profissional se necessário
-            
-            ### 📞 Suporte:
-            - GitHub: [github.com/psrs2000/Portfolio_Optimizer](https://github.com/psrs2000/Portfolio_Optimizer)
-            - Documentação completa no README.md
-            """)
+        # Aba 4: Short Selling
+        self.tab_short = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_short, text="🔄 Short/Hedge")
+        self.setup_short_tab()
         
-        # Botão para fechar ajuda
-        st.markdown("---")
-        if st.button("❌ Fechar Ajuda", use_container_width=False):
-            toggle_help()
-            st.rerun()
-
-# Configuração dos dados de exemplo no GitHub
-# IMPORTANTE: Substitua pelos seus valores reais!
-GITHUB_USER = "psrs2000"  # ← Coloque seu usuário aqui
-GITHUB_REPO = "Portfolio_Optimizer"     # ← Coloque o nome do seu repositório aqui
-GITHUB_BRANCH = "main"
-
-# Arquivos de exemplo disponíveis
-SAMPLE_DATA = {
-    "🏢 Ações Brasileiras": {
-        "filename": "acoes_brasileiras.xlsx",
-        "description": "Principais ações do Ibovespa"
-    },
-    "🏠 Fundos Imobiliários": {
-        "filename": "fundos_imobiliarios.xlsx",
-        "description": "FIIs negociados na B3"
-    },
-    "💰 Fundos de Investimento": {
-        "filename": "fundos_de_investimento.xlsx",
-        "description": "Exemplo com fundos de investimento cadastrados na CVM"
-    },
-    "🌍 ETFs Nacionais": {
-        "filename": "etfs_nacionais.xlsx",
-        "description": "ETFs de mercados Nacionais"
-    },
-    "🪙 Criptomoedas": {
-        "filename": "criptomoedas.xlsx",
-        "description": "Bitcoin, Ethereum e principais"
-    }
-}
-
-def load_from_github(filename):
-    """
-    Carrega arquivo Excel diretamente do GitHub
-    """
-    url = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}/sample_data/{filename}"
-    
-    try:
-        df = pd.read_excel(url)
-        return df
-    except Exception as e:
-        st.error(f"Erro ao carregar arquivo do GitHub: {str(e)}")
-        st.info("Verifique se o arquivo existe e o repositório é público")
-        return None
-
-def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_returns=None):
-    """
-    Cria tabela de retornos mensais do portfólio otimizado
-    MÉTODO CORRIGIDO: Via patrimônio acumulado
-    """
-    # Calcular retornos diários do portfólio
-    portfolio_returns_daily = np.dot(returns_data.values, weights)
-    
-    # Calcular patrimônio acumulado (base 1)
-    portfolio_cumulative = np.cumsum(portfolio_returns_daily)
-    portfolio_patrimonio = 1 + portfolio_cumulative
-    
-    # Usar datas reais se disponíveis, senão simular
-    if dates is not None:
-        portfolio_df = pd.DataFrame({
-            'patrimonio': portfolio_patrimonio
-        }, index=dates)
-    else:
-        # Simular datas (assumindo dados diários consecutivos)
-        start_date = pd.Timestamp('2020-01-01')
-        dates = pd.date_range(start=start_date, periods=len(portfolio_patrimonio), freq='D')
-        portfolio_df = pd.DataFrame({
-            'patrimonio': portfolio_patrimonio
-        }, index=dates)
-    
-    # MÉTODO 1: Patrimônio final de cada mês
-    monthly_patrimonio = portfolio_df['patrimonio'].resample('M').last()
-    
-    # Calcular retornos mensais via pct_change
-    monthly_returns = monthly_patrimonio.pct_change().fillna(monthly_patrimonio.iloc[0] - 1)
-    
-    # Processar taxa livre de risco se disponível
-    monthly_risk_free = None
-    if risk_free_returns is not None:
-        # Mesmo processo para taxa livre
-        risk_free_cumulative = np.cumsum(risk_free_returns.values)
-        risk_free_patrimonio = 1 + risk_free_cumulative
+        # Aba 5: Resultados
+        self.tab_results = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_results, text="📈 Resultados")
+        self.setup_results_tab()
         
-        if dates is not None:
-            risk_free_df = pd.DataFrame({
-                'patrimonio': risk_free_patrimonio
-            }, index=dates)
-        else:
-            risk_free_df = pd.DataFrame({
-                'patrimonio': risk_free_patrimonio
-            }, index=dates)
+        # NOVA Aba 6: Tabelas Mensais
+        self.tab_monthly = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_monthly, text="📅 Retornos Mensais")
+        self.setup_monthly_tab()
         
-        monthly_rf_patrimonio = risk_free_df['patrimonio'].resample('M').last()
-        monthly_risk_free = monthly_rf_patrimonio.pct_change().fillna(monthly_rf_patrimonio.iloc[0] - 1)
-    
-    # Criar tabela pivotada (anos x meses)
-    monthly_df = pd.DataFrame({
-        'Year': monthly_returns.index.year,
-        'Month': monthly_returns.index.month,
-        'Return': monthly_returns.values
-    })
-    
-    # Pivotar para ter anos nas linhas e meses nas colunas
-    pivot_table = monthly_df.pivot(index='Year', columns='Month', values='Return')
-    
-    # Renomear colunas para nomes dos meses
-    month_names = {
-        1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr', 5: 'Mai', 6: 'Jun',
-        7: 'Jul', 8: 'Ago', 9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'
-    }
-    pivot_table.columns = [month_names.get(col, f'M{col}') for col in pivot_table.columns]
-    
-    # Calcular total anual CORRIGIDO
-    yearly_returns = []
-    for year in pivot_table.index:
-        year_data = pivot_table.loc[year].dropna()
-        if len(year_data) > 0:
-            # Retorno anual composto: (1 + jan) × (1 + fev) × ... - 1
-            annual_return = (1 + year_data).prod() - 1
-            yearly_returns.append(annual_return)
-        else:
-            yearly_returns.append(np.nan)
-    
-    pivot_table['Total Anual'] = yearly_returns
-    
-    # Se temos taxa livre, criar tabela comparativa
-    comparison_table = None
-    if monthly_risk_free is not None:
-        # Criar tabela similar para taxa livre
-        rf_monthly_df = pd.DataFrame({
-            'Year': monthly_risk_free.index.year,
-            'Month': monthly_risk_free.index.month,
-            'Return': monthly_risk_free.values
-        })
+    def setup_data_tab(self):
+        """Configurar aba de carregamento de dados"""
+        frame = ttk.LabelFrame(self.tab_data, text="Carregar Dados", padding="10")
+        frame.pack(fill='both', expand=True, padx=10, pady=10)
         
-        rf_pivot = rf_monthly_df.pivot(index='Year', columns='Month', values='Return')
-        rf_pivot.columns = [month_names.get(col, f'M{col}') for col in rf_pivot.columns]
+        # Botão para carregar arquivo
+        ttk.Button(
+            frame, 
+            text="📂 Carregar Planilha Excel", 
+            command=self.load_excel_file,
+            width=30
+        ).pack(pady=10)
         
-        # Calcular total anual da taxa livre
-        rf_yearly = []
-        for year in rf_pivot.index:
-            year_data = rf_pivot.loc[year].dropna()
-            if len(year_data) > 0:
-                annual_return = (1 + year_data).prod() - 1
-                rf_yearly.append(annual_return)
-            else:
-                rf_yearly.append(np.nan)
+        # Frame para mostrar info do arquivo
+        self.info_frame = ttk.LabelFrame(frame, text="Informações do Arquivo")
+        self.info_frame.pack(fill='both', expand=True, pady=10)
         
-        rf_pivot['Total Anual'] = rf_yearly
+        # Label para mostrar status
+        self.status_label = ttk.Label(self.info_frame, text="Nenhum arquivo carregado")
+        self.status_label.pack(pady=5)
         
-        # Criar tabela de comparação (excesso de retorno)
-        comparison_table = pivot_table - rf_pivot
-    
-    return pivot_table, comparison_table
-
-# Sidebar para carregamento de dados
-with st.sidebar:
-    st.header("📁 Carregar Dados")
-    
-    # Tabs para organizar opções
-    tab_exemplo, tab_upload, tab_yahoo = st.tabs(["📊 Exemplos", "📤 Upload", "🌐 Yahoo Finance"])
-    
-    with tab_exemplo:
-        st.markdown("### Dados de Exemplo")
+        # Frame para taxa de referência detectada
+        self.risk_free_frame = ttk.LabelFrame(self.info_frame, text="Taxa de Referência Detectada")
+        self.risk_free_frame.pack(fill='x', pady=10)
         
-        # Verificar se GitHub está configurado
-        if GITHUB_USER == "SEU_USUARIO_GITHUB":
-            st.warning(
-                "⚠️ Configure o GitHub primeiro!\n\n"
-                "1. Edite o arquivo app.py\n"
-                "2. Substitua GITHUB_USER e GITHUB_REPO\n"
-                "3. Faça upload dos arquivos Excel em /sample_data/"
-            )
-        else:
-            st.info("Clique para carregar:")
-            
-            # Botões para cada dataset
-            for name, info in SAMPLE_DATA.items():
-                if st.button(
-                    f"{name}",
-                    use_container_width=True,
-                    help=info['description']
-                ):
-                    with st.spinner(f"Carregando {name}..."):
-                        df_temp = load_from_github(info['filename'])
-                        if df_temp is not None:
-                            st.session_state['df'] = df_temp
-                            st.session_state['data_source'] = name
-                            st.success("✅ Dados carregados!")
-                            st.rerun()
-    
-    with tab_upload:
-        st.markdown("### Upload Manual")
-        uploaded_file = st.file_uploader(
-            "Escolha sua planilha Excel",
-            type=['xlsx', 'xls'],
-            help="Planilha com dados históricos dos ativos"
+        self.risk_free_info = ttk.Label(self.risk_free_frame, text="Nenhuma taxa detectada")
+        self.risk_free_info.pack(pady=5)
+        
+        # Listbox para seleção de ativos
+        ttk.Label(self.info_frame, text="Selecione os ativos (Ctrl+clique para múltiplos):").pack(anchor='w', pady=(10,5))
+        
+        # Frame para listbox com scrollbar
+        listbox_frame = ttk.Frame(self.info_frame)
+        listbox_frame.pack(fill='both', expand=True, pady=5)
+        
+        self.assets_listbox = tk.Listbox(listbox_frame, selectmode='extended')
+        scrollbar = ttk.Scrollbar(listbox_frame, orient='vertical', command=self.assets_listbox.yview)
+        self.assets_listbox.configure(yscrollcommand=scrollbar.set)
+        
+        self.assets_listbox.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+        
+        # Botões de seleção rápida
+        button_frame = ttk.Frame(self.info_frame)
+        button_frame.pack(fill='x', pady=5)
+        
+        ttk.Button(button_frame, text="Selecionar Todos", command=self.select_all_assets).pack(side='left', padx=5)
+        ttk.Button(button_frame, text="Limpar Seleção", command=self.clear_selection).pack(side='left', padx=5)
+        
+    def setup_config_tab(self):
+        """Configurar aba de configurações básicas"""
+        # Frame principal com scroll
+        canvas = tk.Canvas(self.tab_config)
+        scrollbar = ttk.Scrollbar(self.tab_config, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
         
-        if uploaded_file is not None:
-            try:
-                df_temp = pd.read_excel(uploaded_file)
-                st.session_state['df'] = df_temp
-                st.session_state['data_source'] = "Upload Manual"
-                st.success("✅ Arquivo carregado!")
-            except Exception as e:
-                st.error(f"Erro ao ler arquivo: {str(e)}")
-
-    with tab_yahoo:
-        st.markdown("### 🌐 Buscar Online")
-        st.markdown("Busque dados diretamente do Yahoo Finance")
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
         
-        # Configuração de símbolos
-        st.markdown("**📝 Símbolos dos Ativos:**")
-        simbolos_input = st.text_area(
-            "Digite os códigos (um por linha):",
-            value="PETR4\nVALE3\nITUB4\nBBDC4\nABEV3",
-            height=120,
-            help="Digite os códigos dos ativos, um por linha. Ex: PETR4, VALE3, etc."
-        )
+        # 1. Objetivo de Otimização
+        obj_frame = ttk.LabelFrame(scrollable_frame, text="🎯 Objetivo de Otimização", padding="10")
+        obj_frame.pack(fill='x', padx=10, pady=5)
         
-        # NOVO: Ativo de Referência
-        st.markdown("**🏛️ Ativo de Referência (Taxa Livre de Risco):**")
+        self.objective_var = tk.StringVar(value="Maximizar Sharpe Ratio")
         
-        col_ref1, col_ref2 = st.columns([3, 1])
-        
-        with col_ref1:
-            ativo_referencia = st.text_input(
-                "Código do ativo de referência:",
-                value="BOVA11",
-                help="Ex: BOVA11 (Ibovespa), LFTS11 (CDI), IVV (S&P500)"
-            )
-        
-        with col_ref2:
-            usar_referencia = st.checkbox(
-                "Incluir",
-                value=True,
-                help="Marque para incluir ativo de referência"
-            )
-        
-        # Sugestões rápidas
-        st.markdown("💡 **Sugestões:** BOVA11 (Ibovespa), LFTS11 (CDI), SMAL11 (Small Caps)")
-        
-        # Tipo de ativo
-        tipos_disponiveis = [
-            ("Ações Brasileiras", ".SA"),
-            ("Criptomoedas", ""),
-            ("Ações Americanas", ""),
-            ("ETFs Americanos", "")
+        # Lista COMPLETA de objetivos (como no Streamlit)
+        self.base_objectives = [
+            "Maximizar Sharpe Ratio",
+            "Maximizar Sortino Ratio", 
+            "Minimizar Risco",
+            "Maximizar Inclinação",
+            "Maximizar Inclinação/[(1-R²)×Vol]"
         ]
         
-        tipo_ativo = st.selectbox(
-            "🏷️ Tipo de Ativo:",
-            tipos_disponiveis,
-            format_func=lambda x: x[0],
-            index=0
+        # Objetivos que dependem de taxa livre serão adicionados dinamicamente
+        self.risk_free_objectives = [
+            "Maximizar Qualidade da Linearidade",
+            "Maximizar Linearidade do Excesso"
+        ]
+        
+        # Criar radiobuttons para objetivos base
+        self.objective_buttons = {}
+        for obj in self.base_objectives:
+            btn = ttk.Radiobutton(obj_frame, text=obj, variable=self.objective_var, value=obj)
+            btn.pack(anchor='w')
+            self.objective_buttons[obj] = btn
+        
+        # Placeholder para objetivos de taxa livre
+        self.risk_free_obj_frame = ttk.Frame(obj_frame)
+        self.risk_free_obj_frame.pack(fill='x', pady=(10,0))
+        
+        # 2. Limites de Peso Globais
+        limits_frame = ttk.LabelFrame(scrollable_frame, text="📊 Limites de Peso Globais", padding="10")
+        limits_frame.pack(fill='x', padx=10, pady=5)
+        
+        # Min weight
+        min_frame = ttk.Frame(limits_frame)
+        min_frame.pack(fill='x', pady=2)
+        ttk.Label(min_frame, text="Peso mínimo por ativo (%):").pack(side='left')
+        self.min_weight_var = tk.DoubleVar(value=0.0)
+        self.min_weight_label = ttk.Label(min_frame, text="0.0%")
+        self.min_weight_label.pack(side='right')
+        scale_min = ttk.Scale(limits_frame, from_=0, to=20, variable=self.min_weight_var, orient='horizontal',
+                             command=lambda v: self.min_weight_label.config(text=f"{float(v):.1f}%"))
+        scale_min.pack(fill='x', pady=2)
+        
+        # Max weight  
+        max_frame = ttk.Frame(limits_frame)
+        max_frame.pack(fill='x', pady=2)
+        ttk.Label(max_frame, text="Peso máximo por ativo (%):").pack(side='left')
+        self.max_weight_var = tk.DoubleVar(value=30.0)
+        self.max_weight_label = ttk.Label(max_frame, text="30.0%")
+        self.max_weight_label.pack(side='right')
+        scale_max = ttk.Scale(limits_frame, from_=5, to=100, variable=self.max_weight_var, orient='horizontal',
+                             command=lambda v: self.max_weight_label.config(text=f"{float(v):.1f}%"))
+        scale_max.pack(fill='x', pady=2)
+        
+        # 3. Taxa Livre de Risco
+        risk_frame = ttk.LabelFrame(scrollable_frame, text="🏛️ Taxa de Referência", padding="10")
+        risk_frame.pack(fill='x', padx=10, pady=5)
+        
+        # Frame para taxa detectada vs manual
+        self.risk_free_display_frame = ttk.Frame(risk_frame)
+        self.risk_free_display_frame.pack(fill='x')
+        
+        # Taxa manual (será escondida se detectar automaticamente)
+        manual_frame = ttk.Frame(risk_frame)
+        manual_frame.pack(fill='x', pady=5)
+        ttk.Label(manual_frame, text="Taxa de referência manual (% acumulada):").pack(anchor='w')
+        self.risk_free_var = tk.DoubleVar(value=0.0)
+        self.manual_risk_entry = ttk.Entry(manual_frame, textvariable=self.risk_free_var, width=10)
+        self.manual_risk_entry.pack(anchor='w', pady=2)
+        
+        # 4. Botão Otimizar
+        ttk.Button(
+            scrollable_frame, 
+            text="🚀 OTIMIZAR PORTFÓLIO", 
+            command=self.optimize_portfolio,
+            style="Accent.TButton"
+        ).pack(pady=20, ipadx=20, ipady=10)
+        
+        # Empacotar canvas e scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+    def setup_advanced_tab(self):
+        """Configurar aba de restrições individuais"""
+        frame = ttk.LabelFrame(self.tab_advanced, text="🚫 Restrições Individuais por Ativo", padding="10")
+        frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Checkbox para habilitar restrições
+        self.use_individual_constraints = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            frame, 
+            text="Habilitar limites específicos para ativos selecionados", 
+            variable=self.use_individual_constraints,
+            command=self.toggle_individual_constraints
+        ).pack(anchor='w', pady=5)
+        
+        # Frame para scroll das restrições
+        self.constraints_canvas = tk.Canvas(frame)
+        constraints_scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.constraints_canvas.yview)
+        self.constraints_frame = ttk.Frame(self.constraints_canvas)
+        
+        self.constraints_frame.bind(
+            "<Configure>",
+            lambda e: self.constraints_canvas.configure(scrollregion=self.constraints_canvas.bbox("all"))
         )
-        sufixo = tipo_ativo[1]
         
-        # Período
-        st.markdown("**📅 Período:**")
-        col1, col2 = st.columns(2)
+        self.constraints_canvas.create_window((0, 0), window=self.constraints_frame, anchor="nw")
+        self.constraints_canvas.configure(yscrollcommand=constraints_scrollbar.set)
         
-        with col1:
-            data_inicio = st.date_input(
-                "Data Início:",
-                value=datetime.now() - timedelta(days=365),
-                max_value=datetime.now().date()
-            )
+        self.constraints_canvas.pack(side="left", fill="both", expand=True, pady=10)
+        constraints_scrollbar.pack(side="right", fill="y")
         
-        with col2:
-            data_fim = st.date_input(
-                "Data Fim:",
-                value=datetime.now().date(),
-                max_value=datetime.now().date()
-            )
+        # Label inicial
+        self.constraints_info = ttk.Label(self.constraints_frame, text="Carregue dados e selecione ativos primeiro")
+        self.constraints_info.pack(pady=20)
         
-        # Botão para buscar
-        if st.button("🚀 Buscar e Processar", use_container_width=True, type="primary"):
-            # Validações
-            simbolos_lista = [s.strip().upper() for s in simbolos_input.split('\n') if s.strip()]
-            
-            if len(simbolos_lista) < 2:
-                st.error("❌ Digite pelo menos 2 símbolos")
-            elif data_inicio >= data_fim:
-                st.error("❌ Data de início deve ser anterior à data fim")
+    def setup_short_tab(self):
+        """Configurar aba de short selling"""
+        frame = ttk.LabelFrame(self.tab_short, text="🔄 Posições Short / Hedge", padding="10")
+        frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Checkbox para habilitar shorts
+        self.use_short = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            frame, 
+            text="Habilitar posições short/hedge (venda a descoberto)", 
+            variable=self.use_short,
+            command=self.toggle_short_selling
+        ).pack(anchor='w', pady=5)
+        
+        # Frame para scroll dos shorts
+        self.short_canvas = tk.Canvas(frame)
+        short_scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.short_canvas.yview)
+        self.short_frame = ttk.Frame(self.short_canvas)
+        
+        self.short_frame.bind(
+            "<Configure>",
+            lambda e: self.short_canvas.configure(scrollregion=self.short_canvas.bbox("all"))
+        )
+        
+        self.short_canvas.create_window((0, 0), window=self.short_frame, anchor="nw")
+        self.short_canvas.configure(yscrollcommand=short_scrollbar.set)
+        
+        self.short_canvas.pack(side="left", fill="both", expand=True, pady=10)
+        short_scrollbar.pack(side="right", fill="y")
+        
+        # Label inicial
+        self.short_info = ttk.Label(self.short_frame, text="Carregue dados e selecione ativos principais primeiro")
+        self.short_info.pack(pady=20)
+        
+    def setup_results_tab(self):
+        """Configurar aba de resultados"""
+        # PanedWindow para dividir em seções
+        paned = ttk.PanedWindow(self.tab_results, orient='vertical')
+        paned.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Frame superior para métricas
+        metrics_frame = ttk.LabelFrame(paned, text="📊 Métricas do Portfólio", padding="10")
+        paned.add(metrics_frame, weight=1)
+        
+        # Text widget para métricas
+        self.metrics_text = scrolledtext.ScrolledText(metrics_frame, height=15, wrap='word')
+        self.metrics_text.pack(fill='both', expand=True)
+        
+        # Frame inferior dividido
+        bottom_paned = ttk.PanedWindow(paned, orient='horizontal')
+        paned.add(bottom_paned, weight=2)
+        
+        # Frame para composição
+        composition_frame = ttk.LabelFrame(bottom_paned, text="📋 Composição do Portfólio", padding="10")
+        bottom_paned.add(composition_frame, weight=1)
+        
+        # NOVO: Botões de exportação
+        export_frame = ttk.Frame(composition_frame)
+        export_frame.pack(fill='x', pady=(0,10))
+        
+        self.export_csv_btn = ttk.Button(export_frame, text="💾 Exportar CSV", command=self.export_csv)
+        self.export_csv_btn.pack(side='left', padx=(0,5))
+        
+        self.export_excel_btn = ttk.Button(export_frame, text="📊 Exportar Excel", command=self.export_excel)
+        self.export_excel_btn.pack(side='left')
+        
+        self.export_csv_btn.config(state='disabled')
+        self.export_excel_btn.config(state='disabled')
+        
+        # Treeview para mostrar pesos
+        columns = ('Ativo', 'Peso (%)')
+        self.portfolio_tree = ttk.Treeview(composition_frame, columns=columns, show='headings', height=15)
+        
+        for col in columns:
+            self.portfolio_tree.heading(col, text=col)
+            self.portfolio_tree.column(col, width=120)
+        
+        # Scrollbar para treeview
+        tree_scroll = ttk.Scrollbar(composition_frame, orient='vertical', command=self.portfolio_tree.yview)
+        self.portfolio_tree.configure(yscrollcommand=tree_scroll.set)
+        
+        self.portfolio_tree.pack(side='left', fill='both', expand=True)
+        tree_scroll.pack(side='right', fill='y')
+        
+        # Frame para gráfico
+        chart_frame = ttk.LabelFrame(bottom_paned, text="📈 Evolução do Portfólio", padding="10")
+        bottom_paned.add(chart_frame, weight=2)
+        
+        # Placeholder para gráfico matplotlib
+        self.chart_frame = chart_frame
+        
+    def setup_monthly_tab(self):
+        """NOVA: Configurar aba de tabelas mensais"""
+        # Frame principal com scroll
+        main_frame = ttk.Frame(self.tab_monthly)
+        main_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Notebook interno para tabelas
+        self.monthly_notebook = ttk.Notebook(main_frame)
+        self.monthly_notebook.pack(fill='both', expand=True)
+        
+        # Aba 1: Retornos do Portfólio
+        self.tab_portfolio_monthly = ttk.Frame(self.monthly_notebook)
+        self.monthly_notebook.add(self.tab_portfolio_monthly, text="📊 Retornos do Portfólio")
+        
+        # Frame com scroll para tabela do portfólio
+        canvas1 = tk.Canvas(self.tab_portfolio_monthly)
+        scrollbar1 = ttk.Scrollbar(self.tab_portfolio_monthly, orient="vertical", command=canvas1.yview)
+        scrollable_frame1 = ttk.Frame(canvas1)
+        
+        scrollable_frame1.bind("<Configure>", lambda e: canvas1.configure(scrollregion=canvas1.bbox("all")))
+        canvas1.create_window((0, 0), window=scrollable_frame1, anchor="nw")
+        canvas1.configure(yscrollcommand=scrollbar1.set)
+        
+        self.portfolio_monthly_frame = scrollable_frame1
+        
+        canvas1.pack(side="left", fill="both", expand=True)
+        scrollbar1.pack(side="right", fill="y")
+        
+        # Aba 2: Excesso de Retorno
+        self.tab_excess_monthly = ttk.Frame(self.monthly_notebook)
+        self.monthly_notebook.add(self.tab_excess_monthly, text="📈 Excesso de Retorno")
+        
+        # Frame com scroll para tabela do excesso
+        canvas2 = tk.Canvas(self.tab_excess_monthly)
+        scrollbar2 = ttk.Scrollbar(self.tab_excess_monthly, orient="vertical", command=canvas2.yview)
+        scrollable_frame2 = ttk.Frame(canvas2)
+        
+        scrollable_frame2.bind("<Configure>", lambda e: canvas2.configure(scrollregion=canvas2.bbox("all")))
+        canvas2.create_window((0, 0), window=scrollable_frame2, anchor="nw")
+        canvas2.configure(yscrollcommand=scrollbar2.set)
+        
+        self.excess_monthly_frame = scrollable_frame2
+        
+        canvas2.pack(side="left", fill="both", expand=True)
+        scrollbar2.pack(side="right", fill="y")
+        
+        # Labels iniciais
+        ttk.Label(self.portfolio_monthly_frame, text="Execute uma otimização para ver as tabelas mensais").pack(pady=20)
+        ttk.Label(self.excess_monthly_frame, text="Execute uma otimização para ver as tabelas mensais").pack(pady=20)
+        
+    def create_monthly_returns_table(self, returns_data, weights, dates=None, risk_free_returns=None):
+        """Criar tabela de retornos mensais do portfólio otimizado"""
+        # Calcular retornos diários do portfólio
+        portfolio_returns_daily = np.dot(returns_data.values, weights)
+        
+        # Criar DataFrame com retornos diários
+        portfolio_df = pd.DataFrame({
+            'returns': portfolio_returns_daily
+        }, index=range(len(portfolio_returns_daily)))
+        
+        # Adicionar taxa livre se disponível
+        if risk_free_returns is not None:
+            portfolio_df['risk_free'] = risk_free_returns.values
+        
+        # Usar datas reais se disponíveis, senão simular
+        if dates is not None:
+            portfolio_df.index = dates
+        else:
+            # Simular datas (assumindo dados diários consecutivos)
+            start_date = pd.Timestamp('2020-01-01')
+            dates = pd.date_range(start=start_date, periods=len(portfolio_returns_daily), freq='D')
+            portfolio_df.index = dates
+        
+        # Calcular retornos mensais
+        # Converter retornos diários para retornos compostos mensais
+        portfolio_df['returns_factor'] = 1 + portfolio_df['returns']
+        monthly_returns = portfolio_df['returns_factor'].resample('M').prod() - 1
+        
+        # Calcular retornos mensais da taxa livre se disponível
+        if risk_free_returns is not None:
+            portfolio_df['risk_free_factor'] = 1 + portfolio_df['risk_free']
+            monthly_risk_free = portfolio_df['risk_free_factor'].resample('M').prod() - 1
+        
+        # Criar tabela pivotada (anos x meses)
+        monthly_df = pd.DataFrame({
+            'Year': monthly_returns.index.year,
+            'Month': monthly_returns.index.month,
+            'Return': monthly_returns.values
+        })
+        
+        # Pivotar para ter anos nas linhas e meses nas colunas
+        pivot_table = monthly_df.pivot(index='Year', columns='Month', values='Return')
+        
+        # Renomear colunas para nomes dos meses
+        month_names = {
+            1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr', 5: 'Mai', 6: 'Jun',
+            7: 'Jul', 8: 'Ago', 9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'
+        }
+        pivot_table.columns = [month_names.get(col, f'M{col}') for col in pivot_table.columns]
+        
+        # Calcular total anual (soma dos retornos mensais compostos)
+        yearly_returns = []
+        for year in pivot_table.index:
+            year_data = pivot_table.loc[year].dropna()
+            if len(year_data) > 0:
+                # Retorno anual composto
+                annual_return = (1 + year_data).prod() - 1
+                yearly_returns.append(annual_return)
             else:
-                # NOVO: Adicionar ativo de referência à lista se selecionado
-                simbolos_completos = simbolos_lista.copy()
-                if usar_referencia and ativo_referencia.strip():
-                    ativo_ref_clean = ativo_referencia.strip().upper()
-                    if ativo_ref_clean not in simbolos_completos:
-                        simbolos_completos.append(ativo_ref_clean)
-                        st.info(f"📊 Ativo de referência adicionado: {ativo_ref_clean}")
+                yearly_returns.append(np.nan)
+        
+        pivot_table['Total Anual'] = yearly_returns
+        
+        # Se temos taxa livre, criar tabela comparativa
+        comparison_table = None
+        if risk_free_returns is not None:
+            # Criar tabela similar para taxa livre
+            rf_monthly_df = pd.DataFrame({
+                'Year': monthly_risk_free.index.year,
+                'Month': monthly_risk_free.index.month,
+                'Return': monthly_risk_free.values
+            })
+            
+            rf_pivot = rf_monthly_df.pivot(index='Year', columns='Month', values='Return')
+            rf_pivot.columns = [month_names.get(col, f'M{col}') for col in rf_pivot.columns]
+            
+            # Calcular total anual da taxa livre
+            rf_yearly = []
+            for year in rf_pivot.index:
+                year_data = rf_pivot.loc[year].dropna()
+                if len(year_data) > 0:
+                    annual_return = (1 + year_data).prod() - 1
+                    rf_yearly.append(annual_return)
+                else:
+                    rf_yearly.append(np.nan)
+            
+            rf_pivot['Total Anual'] = rf_yearly
+            
+            # Criar tabela de comparação (excesso de retorno)
+            comparison_table = pivot_table - rf_pivot
+        
+        return pivot_table, comparison_table
+        
+    def display_monthly_tables(self):
+        """NOVA: Exibir tabelas de retornos mensais"""
+        if not self.result or not self.result['success']:
+            return
+        
+        try:
+            # Criar tabelas mensais
+            dates = getattr(self.optimizer, 'dates', None)
+            risk_free_returns = getattr(self.optimizer, 'risk_free_returns', None)
+            
+            self.monthly_table, self.excess_table = self.create_monthly_returns_table(
+                self.optimizer.returns_data, 
+                self.result['weights'],
+                dates,
+                risk_free_returns
+            )
+            
+            # Limpar frames anteriores
+            for widget in self.portfolio_monthly_frame.winfo_children():
+                widget.destroy()
+            for widget in self.excess_monthly_frame.winfo_children():
+                widget.destroy()
+            
+            # Criar tabela do portfólio
+            self.create_table_widget(self.portfolio_monthly_frame, self.monthly_table, "Retornos Mensais do Portfólio (%)")
+            
+            # Criar tabela do excesso se disponível
+            if self.excess_table is not None:
+                self.create_table_widget(self.excess_monthly_frame, self.excess_table, "Excesso de Retorno Mensal (%)")
+            else:
+                ttk.Label(self.excess_monthly_frame, text="Não disponível (sem taxa de referência detectada)").pack(pady=20)
                 
-                with st.spinner("🔄 Buscando dados do Yahoo Finance..."):
-                    # 1. Buscar dados
-                    dados_yahoo, erros = buscar_dados_yahoo(
-                        simbolos_completos, 
-                        datetime.combine(data_inicio, datetime.min.time()),
-                        datetime.combine(data_fim, datetime.min.time()),
-                        sufixo
-                    )
-                    
-                    if dados_yahoo:
-                        st.success(f"✅ Dados obtidos para {len(dados_yahoo)} ativos")
-                        
-                        if erros:
-                            st.warning(f"⚠️ Erros em: {', '.join(erros)}")
-                        
-                        # 2. Consolidar
-                        with st.spinner("🔄 Consolidando dados..."):
-                            df_consolidado = criar_consolidado_yahoo(dados_yahoo)
-                        
-                        # DEBUG: Verificar consolidado
-                        if df_consolidado is not None:
-                            st.success(f"✅ Consolidado criado: {df_consolidado.shape}")
-                            
-                            # 3. Transformar para base 0
-                            with st.spinner("🔄 Transformando para base 0..."):
-                                df_base_zero, removidas = transformar_base_zero(df_consolidado)
-                            
-                            # DEBUG: Verificar transformação
-                            if df_base_zero is not None and not df_base_zero.empty:
-                                st.success(f"✅ Base 0 criada: {df_base_zero.shape}")
-                                
-                                # 4. Preparar para o otimizador com ATIVO DE REFERÊNCIA
-                                try:
-                                    df_final = df_base_zero.copy()
-                                    df_final = df_final.reset_index()  # Data vira primeira coluna
-                                    
-                                    # NOVO: Reorganizar colunas se tem ativo de referência
-                                    if usar_referencia and ativo_referencia.strip():
-                                        ativo_ref_clean = ativo_referencia.strip().upper()
-                                        
-                                        if ativo_ref_clean in df_final.columns:
-                                            # CORREÇÃO: Renomear para que o otimizador detecte
-                                            nome_referencia = f"Taxa_Ref_{ativo_ref_clean}"
-                                            
-                                            # Reorganizar: Data, Taxa_Ref_XXXX, Outros_Ativos
-                                            colunas_reorganizadas = ['Data']
-                                            outras_colunas = [col for col in df_final.columns 
-                                                            if col not in ['Data', ativo_ref_clean]]
-                                            
-                                            # Renomear a coluna do ativo de referência
-                                            df_final = df_final.rename(columns={ativo_ref_clean: nome_referencia})
-                                            
-                                            # Reorganizar colunas: Data, Taxa_Ref, Outros
-                                            colunas_reorganizadas.append(nome_referencia)
-                                            colunas_reorganizadas.extend(outras_colunas)
-                                            
-                                            df_final = df_final[colunas_reorganizadas]
-                                            
-                                            st.info(f"🏛️ Ativo de referência renomeado para: {nome_referencia}")
-                                            st.success(f"✅ Otimizador detectará automaticamente como taxa de referência!")
-                                        else:
-                                            st.warning(f"⚠️ Ativo de referência {ativo_ref_clean} não encontrado nos dados")
-                                    
-                                    # Salvar no session state
-                                    st.session_state['df'] = df_final
-                                    st.session_state['data_source'] = f"Yahoo Finance ({len(dados_yahoo)} ativos)"
-                                    
-                                    st.success("🎉 Dados processados e carregados!")
-                                    
-                                    # Mostrar resumo
-                                    resumo_texto = (
-                                        f"📊 **Resumo:**\n"
-                                        f"• Ativos processados: {len(df_base_zero.columns)}\n"
-                                        f"• Período: {data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}\n"
-                                        f"• Dias: {len(df_base_zero)} registros\n"
-                                    )
-                                    
-                                    if usar_referencia and ativo_referencia.strip():
-                                        resumo_texto += f"• Ativo de referência: {ativo_referencia.strip().upper()}\n"
-                                    
-                                    if removidas:
-                                        resumo_texto += f"• Removidos: {', '.join(removidas)}"
-                                    
-                                    st.info(resumo_texto)
-                                    
-                                    st.rerun()
-                                    
-                                except Exception as e:
-                                    st.error(f"❌ Erro ao preparar dados: {str(e)}")
-                                    import traceback
-                                    st.code(traceback.format_exc())
-                            else:
-                                st.error("❌ Erro na transformação para base 0")
-                        else:
-                            st.error("❌ Erro ao consolidar dados")
-                    else:
-                        st.error("❌ Nenhum dado encontrado. Verifique os símbolos.")
+        except Exception as e:
+            ttk.Label(self.portfolio_monthly_frame, text=f"Erro ao gerar tabelas: {str(e)}").pack(pady=20)
+            ttk.Label(self.excess_monthly_frame, text=f"Erro ao gerar tabelas: {str(e)}").pack(pady=20)
     
-    # Link para Google Drive
-    st.markdown("---")
-    st.markdown(
-        "📂 **Baixar mais dados:**\n\n"
-        "[Pasta no Google Drive]"
-        "(https://drive.google.com/drive/folders/1t8EcZZqGqPIH3pzZ-DdBytrr3Rb1TuwV?usp=sharing)"
-    )
+    def create_table_widget(self, parent, data_df, title):
+        """Criar widget de tabela com cores para uma DataFrame"""
+        # Título
+        ttk.Label(parent, text=title, font=('TkDefaultFont', 12, 'bold')).pack(pady=(10,5))
+        
+        # Frame para tabela
+        table_frame = ttk.Frame(parent)
+        table_frame.pack(fill='both', expand=True, padx=10, pady=5)
+        
+        # Preparar dados formatados
+        display_data = data_df.copy()
+        for col in display_data.columns:
+            display_data[col] = display_data[col].apply(
+                lambda x: f"{x:.2%}" if pd.notna(x) else "-"
+            )
+        
+        # Criar Treeview
+        columns = ['Ano'] + list(display_data.columns)
+        tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=12)
+        
+        # Configurar cabeçalhos
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=80, anchor='center')
+        
+        # Inserir dados
+        for year, row in display_data.iterrows():
+            values = [str(year)] + [str(val) for val in row]
+            item = tree.insert('', 'end', values=values)
+            
+            # Colorir baseado nos valores (aproximação)
+            try:
+                # Verificar se maioria dos valores são positivos (verde) ou negativos (vermelho)
+                numeric_values = []
+                for val in row:
+                    if val != "-" and pd.notna(val):
+                        # Extrair valor numérico da string formatada
+                        if isinstance(val, str) and '%' in val:
+                            numeric_val = float(val.replace('%', '')) / 100
+                        else:
+                            numeric_val = float(val)
+                        numeric_values.append(numeric_val)
+                
+                if numeric_values:
+                    avg_return = sum(numeric_values) / len(numeric_values)
+                    if avg_return > 0:
+                        # Configurar tags para cores (se suportado pelo sistema)
+                        tree.set(item, 'Ano', f"📈 {year}")
+                    elif avg_return < 0:
+                        tree.set(item, 'Ano', f"📉 {year}")
+            except:
+                pass  # Ignorar erros de formatação
+        
+        # Scrollbars
+        v_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        h_scrollbar = ttk.Scrollbar(table_frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+        
+        # Layout da tabela
+        tree.grid(row=0, column=0, sticky='nsew')
+        v_scrollbar.grid(row=0, column=1, sticky='ns')
+        h_scrollbar.grid(row=1, column=0, sticky='ew')
+        
+        # Configurar peso das colunas/linhas
+        table_frame.grid_rowconfigure(0, weight=1)
+        table_frame.grid_columnconfigure(0, weight=1)
+        
+    def export_csv(self):
+        """Exportar CSV - VERSÃO SUPER SIMPLES"""
+        if not self.result or not self.result['success']:
+            messagebox.showerror("Erro", "Execute uma otimização primeiro!")
+            return
+        
+        try:
+            # Diálogo simples - SEM initialfile
+            filename = filedialog.asksaveasfilename(
+                title="Salvar CSV",
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv")]
+            )
+            
+            if filename:
+                # Dados simples
+                data = []
+                for i, asset in enumerate(self.result['assets']):
+                    weight = self.result['weights'][i]
+                    if abs(weight) > 0.001:
+                        data.append([asset, f"{weight*100:.2f}%"])
+                
+                # Salvar direto
+                df = pd.DataFrame(data, columns=['Ativo', 'Peso'])
+                df.to_csv(filename, index=False)
+                
+                messagebox.showinfo("Sucesso", "CSV exportado!")
+                
+        except Exception as e:
+            messagebox.showerror("Erro", f"Falha: {str(e)}")
 
-# Verificar se há dados carregados
-df = st.session_state.get('df', None)
-
-# Área principal
-if df is not None:
-    try:
-        # Mostrar origem dos dados
-        data_source = st.session_state.get('data_source', 'Desconhecida')
-        st.success(f"✅ Dados carregados: **{data_source}**")
+    def export_excel(self):
+        """Exportar Excel - VERSÃO SUPER SIMPLES"""
+        if not self.result or not self.result['success']:
+            messagebox.showerror("Erro", "Execute uma otimização primeiro!")
+            return
         
-        # Mostrar preview dos dados
-        with st.expander("📋 Ver dados carregados"):
-            st.write(f"Dimensões: {df.shape[0]} linhas x {df.shape[1]} colunas")
-            st.dataframe(df.head(10))
+        try:
+            # Diálogo simples - SEM initialfile
+            filename = filedialog.asksaveasfilename(
+                title="Salvar Excel",
+                defaultextension=".xlsx",
+                filetypes=[("Excel files", "*.xlsx")]
+            )
+            
+            if filename:
+                # Dados simples
+                data = []
+                for i, asset in enumerate(self.result['assets']):
+                    weight = self.result['weights'][i]
+                    if abs(weight) > 0.001:
+                        data.append([asset, f"{weight*100:.2f}%"])
+                
+                # Salvar direto
+                df = pd.DataFrame(data, columns=['Ativo', 'Peso'])
+                df.to_excel(filename, index=False)
+                
+                messagebox.showinfo("Sucesso", "Excel exportado!")
+                
+        except Exception as e:
+            messagebox.showerror("Erro", f"Falha: {str(e)}")
+    
+    def prepare_export_data(self):
+        """Preparar dados da composição do portfólio para export"""
+        # Obter todos os pesos (incluindo negativos)
+        all_weights = self.result['weights']
+        export_list = []
         
-        # Verificar se há taxa de referência na coluna B
-        has_risk_free = False
-        risk_free_column_name = None
-        if len(df.columns) > 2 and isinstance(df.columns[1], str):
-            col_name = df.columns[1].lower()
-            if any(term in col_name for term in ['taxa', 'livre', 'risco', 'ibov', 'ref', 'cdi', 'selic']):
-                has_risk_free = True
-                risk_free_column_name = df.columns[1]
-                st.info(f"📊 Taxa de referência detectada: '{risk_free_column_name}'")
+        for i, asset in enumerate(self.result['assets']):
+            weight = all_weights[i]
+            if abs(weight) > 0.001:  # Incluir pesos > 0.1%
+                export_list.append({
+                    'Ativo': asset,
+                    'Peso_Decimal': weight,
+                    'Peso_Percentual': weight * 100,
+                    'Tipo': 'LONG' if weight > 0 else 'SHORT'
+                })
         
-        # Seleção de ativos
-        st.header("🛒 Seleção de Ativos")
+        return pd.DataFrame(export_list)
+    
+    def prepare_metrics_export(self):
+        """Preparar métricas do portfólio para export"""
+        metrics = self.result['metrics']
         
-        # Identificar colunas de ativos
-        if isinstance(df.columns[0], str) and 'data' in df.columns[0].lower():
-            if has_risk_free:
-                asset_columns = df.columns[2:].tolist()  # Ativos começam na coluna C
-            else:
-                asset_columns = df.columns[1:].tolist()  # Ativos começam na coluna B
-        else:
-            asset_columns = df.columns.tolist()
+        metrics_list = [
+            {'Métrica': 'Retorno Total', 'Valor': metrics['gv_final'], 'Formato': f"{metrics['gv_final']:.4f}"},
+            {'Métrica': 'Retorno Anualizado', 'Valor': metrics['annual_return'], 'Formato': f"{metrics['annual_return']:.4f}"},
+            {'Métrica': 'Volatilidade', 'Valor': metrics['volatility'], 'Formato': f"{metrics['volatility']:.4f}"},
+            {'Métrica': 'Sharpe Ratio', 'Valor': metrics['sharpe_ratio'], 'Formato': f"{metrics['sharpe_ratio']:.4f}"},
+            {'Métrica': 'Sortino Ratio', 'Valor': metrics['sortino_ratio'], 'Formato': f"{metrics['sortino_ratio']:.4f}"},
+            {'Métrica': 'Downside Deviation', 'Valor': metrics['downside_deviation'], 'Formato': f"{metrics['downside_deviation']:.4f}"},
+            {'Métrica': 'Excesso de Retorno', 'Valor': metrics['excess_return'], 'Formato': f"{metrics['excess_return']:.4f}"},
+            {'Métrica': 'R²', 'Valor': metrics['r_squared'], 'Formato': f"{metrics['r_squared']:.4f}"},
+            {'Métrica': 'VaR 95% Diário', 'Valor': metrics['var_95_daily'], 'Formato': f"{metrics['var_95_daily']:.4f}"},
+            {'Métrica': 'CVaR 95% Diário', 'Valor': metrics['cvar_95_daily'], 'Formato': f"{metrics['cvar_95_daily']:.4f}"},
+            {'Métrica': 'Taxa de Referência', 'Valor': metrics['risk_free_rate'], 'Formato': f"{metrics['risk_free_rate']:.4f}"},
+        ]
         
-        st.markdown("Selecione os ativos que deseja incluir na otimização:")
+        # Adicionar métricas do excesso se disponíveis
+        if self.objective_var.get() == "Maximizar Linearidade do Excesso" and metrics.get('excess_r_squared') is not None:
+            if hasattr(self.optimizer, 'risk_free_returns') and self.optimizer.risk_free_returns is not None:
+                excess_returns_daily = metrics['portfolio_returns_daily'] - self.optimizer.risk_free_returns.values
+                excess_vol = np.std(excess_returns_daily, ddof=0) * np.sqrt(252)
+                
+                metrics_list.extend([
+                    {'Métrica': 'R² do Excesso', 'Valor': metrics['excess_r_squared'], 'Formato': f"{metrics['excess_r_squared']:.4f}"},
+                    {'Métrica': 'Volatilidade do Excesso', 'Valor': excess_vol, 'Formato': f"{excess_vol:.4f}"},
+                ])
         
-        # Opção com multiselect - Todos ativos selecionados por padrão
-        selected_assets = st.multiselect(
-            "🔍 Digite para buscar ou clique para selecionar:",
-            options=asset_columns,
-            default=asset_columns,  #  AGORA SELECIONA TODOS
-            help="Você pode digitar parte do nome para filtrar os ativos",
-            placeholder="Escolha os ativos..."
+        return pd.DataFrame(metrics_list)
+        
+    def load_excel_file(self):
+        """Carregar arquivo Excel com detecção completa de taxa livre"""
+        file_path = filedialog.askopenfilename(
+            title="Selecionar planilha Excel",
+            filetypes=[("Excel files", "*.xlsx *.xls")]
         )
         
-        # Verificar se pelo menos 2 ativos foram selecionados
-        if len(selected_assets) < 2:
-            st.warning("⚠️ Selecione pelo menos 2 ativos para otimização")
-        else:
-            st.success(f"✅ {len(selected_assets)} ativos selecionados de {len(asset_columns)} disponíveis")
+        if file_path:
+            try:
+                self.df = pd.read_excel(file_path)
+                
+                # Reset variáveis
+                self.has_risk_free = False
+                self.risk_free_column_name = None
+                self.detected_risk_free_rate = 0.0
+                
+                # Identificar colunas (mesma lógica do Streamlit)
+                if isinstance(self.df.columns[0], str) and 'data' in self.df.columns[0].lower():
+                    # Verificar taxa livre de risco na coluna B
+                    if len(self.df.columns) > 2 and isinstance(self.df.columns[1], str):
+                        col_name = self.df.columns[1].lower()
+                        if any(term in col_name for term in ['taxa', 'livre', 'risco', 'ibov', 'ref', 'cdi', 'selic']):
+                            self.has_risk_free = True
+                            self.risk_free_column_name = self.df.columns[1]
+                            asset_columns = self.df.columns[2:].tolist()  # Ativos começam na coluna C
+                            
+                            # CALCULAR TAXA ACUMULADA (como no Streamlit)
+                            try:
+                                # Criar um otimizador temporário para calcular a taxa
+                                temp_optimizer = PortfolioOptimizer(self.df, [])
+                                if hasattr(temp_optimizer, 'risk_free_rate_total'):
+                                    self.detected_risk_free_rate = temp_optimizer.risk_free_rate_total
+                                    
+                            except Exception as e:
+                                print(f"Erro ao calcular taxa livre: {e}")
+                                self.detected_risk_free_rate = 0.0
+                        else:
+                            asset_columns = self.df.columns[1:].tolist()  # Ativos começam na coluna B
+                    else:
+                        asset_columns = self.df.columns[1:].tolist()
+                else:
+                    asset_columns = self.df.columns.tolist()
+                
+                # Atualizar interface
+                file_name = os.path.basename(file_path)
+                status_text = f"✅ Arquivo: {file_name}\nDimensões: {self.df.shape[0]} linhas x {self.df.shape[1]} colunas"
+                self.status_label.config(text=status_text)
+                
+                # Atualizar info da taxa livre
+                if self.has_risk_free:
+                    risk_text = f"✅ Detectada: '{self.risk_free_column_name}'\nTaxa acumulada: {self.detected_risk_free_rate:.2%}"
+                    self.risk_free_info.config(text=risk_text, foreground='green')
+                    
+                    # Esconder entrada manual e mostrar detectada
+                    self.manual_risk_entry.config(state='disabled')
+                    
+                    # Habilitar objetivos de taxa livre
+                    self.update_objective_options()
+                else:
+                    self.risk_free_info.config(text="❌ Nenhuma taxa detectada", foreground='red')
+                    self.manual_risk_entry.config(state='normal')
+                
+                # Preencher listbox de ativos
+                self.assets_listbox.delete(0, tk.END)
+                for asset in asset_columns:
+                    self.assets_listbox.insert(tk.END, asset)
+                    
+                # Resetar widgets avançados
+                self.update_advanced_widgets()
+                    
+                messagebox.showinfo("Sucesso", "Arquivo carregado com sucesso!")
+                
+            except Exception as e:
+                messagebox.showerror("Erro", f"Erro ao carregar arquivo:\n{str(e)}")
+                
+    def update_objective_options(self):
+        """Atualizar opções de objetivo baseado na taxa livre"""
+        # Limpar objetivos de taxa livre anteriores
+        for widget in self.risk_free_obj_frame.winfo_children():
+            widget.destroy()
+        
+        if self.has_risk_free:
+            # Adicionar separador
+            ttk.Separator(self.risk_free_obj_frame, orient='horizontal').pack(fill='x', pady=5)
+            ttk.Label(self.risk_free_obj_frame, text="Objetivos com Taxa de Referência:", 
+                     font=('TkDefaultFont', 9, 'bold')).pack(anchor='w')
             
-        # Mostrar resumo dos selecionados (opcional)
-        if st.checkbox("📋 Ver lista de ativos selecionados", value=False):
-            for i, asset in enumerate(selected_assets, 1):
-                st.text(f"{i}. {asset}")
+            # Adicionar objetivos de taxa livre
+            for obj in self.risk_free_objectives:
+                btn = ttk.Radiobutton(self.risk_free_obj_frame, text=obj, variable=self.objective_var, value=obj)
+                btn.pack(anchor='w')
+                self.objective_buttons[obj] = btn
+    
+    def update_advanced_widgets(self):
+        """Atualizar widgets de restrições e shorts"""
+        self.update_constraints_widgets()
+        self.update_short_widgets()
+    
+    def update_constraints_widgets(self):
+        """Atualizar widgets de restrições individuais"""
+        # Limpar widgets existentes
+        for widget in self.constraints_frame.winfo_children():
+            widget.destroy()
+        self.constraint_widgets.clear()
         
-        # NOVA SEÇÃO: Short Selling / Hedge
-        st.header("🔄 Posições Short / Hedge (Opcional)")
+        if not self.use_individual_constraints.get():
+            self.constraints_info = ttk.Label(self.constraints_frame, text="Habilite as restrições individuais acima")
+            self.constraints_info.pack(pady=20)
+            return
+            
+        selected_assets = self.get_selected_assets()
+        if len(selected_assets) < 2:
+            self.constraints_info = ttk.Label(self.constraints_frame, text="Selecione pelo menos 2 ativos na aba Dados")
+            self.constraints_info.pack(pady=20)
+            return
         
-        use_short = st.checkbox("Habilitar posições short/hedge", help="Permite incluir ativos com pesos negativos (venda a descoberto)")
+        # Criar widgets para cada ativo selecionado
+        ttk.Label(self.constraints_frame, text="Configure limites específicos:", 
+                 font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0,10))
+        
+        for asset in selected_assets:
+            # Frame para cada ativo
+            asset_frame = ttk.LabelFrame(self.constraints_frame, text=asset, padding="5")
+            asset_frame.pack(fill='x', pady=5, padx=10)
+            
+            # Frame para min e max lado a lado
+            limits_frame = ttk.Frame(asset_frame)
+            limits_frame.pack(fill='x')
+            
+            # Min
+            min_frame = ttk.Frame(limits_frame)
+            min_frame.pack(side='left', fill='x', expand=True, padx=(0,5))
+            ttk.Label(min_frame, text="Mín (%):").pack(anchor='w')
+            min_var = tk.DoubleVar(value=self.min_weight_var.get())
+            min_entry = ttk.Entry(min_frame, textvariable=min_var, width=8)
+            min_entry.pack(anchor='w')
+            
+            # Max
+            max_frame = ttk.Frame(limits_frame)
+            max_frame.pack(side='left', fill='x', expand=True, padx=(5,0))
+            ttk.Label(max_frame, text="Máx (%):").pack(anchor='w')
+            max_var = tk.DoubleVar(value=self.max_weight_var.get())
+            max_entry = ttk.Entry(max_frame, textvariable=max_var, width=8)
+            max_entry.pack(anchor='w')
+            
+            # Guardar referências
+            self.constraint_widgets[asset] = {
+                'min_var': min_var,
+                'max_var': max_var,
+                'min_entry': min_entry,
+                'max_entry': max_entry
+            }
+    
+    def update_short_widgets(self):
+        """Atualizar widgets de short selling"""
+        # Limpar widgets existentes
+        for widget in self.short_frame.winfo_children():
+            widget.destroy()
+        self.short_widgets.clear()
+        
+        if not self.use_short.get():
+            self.short_info = ttk.Label(self.short_frame, text="Habilite posições short acima")
+            self.short_info.pack(pady=20)
+            return
+        
+        if self.df is None:
+            self.short_info = ttk.Label(self.short_frame, text="Carregue dados primeiro")
+            self.short_info.pack(pady=20)
+            return
+            
+        selected_assets = self.get_selected_assets()
+        if len(selected_assets) < 1:
+            self.short_info = ttk.Label(self.short_frame, text="Selecione ativos principais na aba Dados")
+            self.short_info.pack(pady=20)
+            return
+        
+        # Identificar ativos disponíveis para short (não selecionados)
+        all_assets = list(self.assets_listbox.get(0, tk.END))
+        available_for_short = [asset for asset in all_assets if asset not in selected_assets]
+        
+        if len(available_for_short) == 0:
+            self.short_info = ttk.Label(self.short_frame, text="Selecione menos ativos principais para liberar opções de short")
+            self.short_info.pack(pady=20)
+            return
+        
+        # Criar widgets para shorts
+        ttk.Label(self.short_frame, text="Selecione ativos para posição short (venda a descoberto):", 
+                 font=('TkDefaultFont', 10, 'bold')).pack(anchor='w', pady=(0,10))
+        
+        for asset in available_for_short:
+            # Frame para cada ativo short
+            asset_frame = ttk.Frame(self.short_frame)
+            asset_frame.pack(fill='x', pady=2, padx=10)
+            
+            # Checkbox para habilitar short neste ativo
+            use_var = tk.BooleanVar(value=False)
+            check = ttk.Checkbutton(asset_frame, text=asset, variable=use_var,
+                                   command=lambda a=asset: self.toggle_short_asset(a))
+            check.pack(side='left', anchor='w')
+            
+            # Entry para peso (inicialmente desabilitado)
+            weight_var = tk.DoubleVar(value=-10.0)
+            weight_entry = ttk.Entry(asset_frame, textvariable=weight_var, width=8, state='disabled')
+            weight_entry.pack(side='right', padx=(5,0))
+            ttk.Label(asset_frame, text="Peso (%):").pack(side='right')
+            
+            # Guardar referências
+            self.short_widgets[asset] = {
+                'use_var': use_var,
+                'weight_var': weight_var,
+                'check': check,
+                'entry': weight_entry
+            }
+    
+    def toggle_individual_constraints(self):
+        """Toggle restrições individuais"""
+        self.update_constraints_widgets()
+    
+    def toggle_short_selling(self):
+        """Toggle short selling"""
+        self.update_short_widgets()
+    
+    def toggle_short_asset(self, asset):
+        """Toggle short para ativo específico"""
+        if asset in self.short_widgets:
+            widgets = self.short_widgets[asset]
+            if widgets['use_var'].get():
+                widgets['entry'].config(state='normal')
+            else:
+                widgets['entry'].config(state='disabled')
+    
+    def get_individual_constraints(self):
+        """Obter dicionário de restrições individuais"""
+        if not self.use_individual_constraints.get():
+            return None
+        
+        constraints = {}
+        for asset, widgets in self.constraint_widgets.items():
+            min_val = widgets['min_var'].get() / 100
+            max_val = widgets['max_var'].get() / 100
+            
+            # Validar
+            if min_val > max_val:
+                messagebox.showerror("Erro", f"Peso mínimo > máximo para {asset}")
+                return None
+                
+            constraints[asset] = {
+                'min': min_val,
+                'max': max_val
+            }
+        
+        return constraints
+    
+    def get_short_configuration(self):
+        """Obter configuração de shorts"""
+        if not self.use_short.get():
+            return [], {}
         
         short_assets = []
         short_weights = {}
         
-        if use_short:
-            # Identificar ativos não selecionados
-            available_for_short = [asset for asset in asset_columns if asset not in selected_assets]
+        for asset, widgets in self.short_widgets.items():
+            if widgets['use_var'].get():
+                weight = widgets['weight_var'].get() / 100
+                if weight > 0:
+                    messagebox.showerror("Erro", f"Peso short deve ser negativo para {asset}")
+                    return [], {}
+                short_assets.append(asset)
+                short_weights[asset] = weight
+        
+        return short_assets, short_weights
+    
+    def select_all_assets(self):
+        """Selecionar todos os ativos"""
+        self.assets_listbox.select_set(0, tk.END)
+        self.update_advanced_widgets()
+    
+    def clear_selection(self):
+        """Limpar seleção de ativos"""
+        self.assets_listbox.selection_clear(0, tk.END)
+        self.update_advanced_widgets()
+    
+    def get_selected_assets(self):
+        """Obter ativos selecionados"""
+        selected_indices = self.assets_listbox.curselection()
+        return [self.assets_listbox.get(i) for i in selected_indices]
+    
+    def optimize_portfolio(self):
+        """Executar otimização do portfólio com TODAS as funcionalidades"""
+        if self.df is None:
+            messagebox.showerror("Erro", "Carregue um arquivo Excel primeiro!")
+            return
+        
+        selected_assets = self.get_selected_assets()
+        if len(selected_assets) < 2:
+            messagebox.showerror("Erro", "Selecione pelo menos 2 ativos!")
+            return
+        
+        # Obter configurações avançadas
+        individual_constraints = self.get_individual_constraints()
+        if individual_constraints is None and self.use_individual_constraints.get():
+            return  # Erro já mostrado na função
+        
+        short_assets, short_weights = self.get_short_configuration()
+        if short_assets is None:
+            return  # Erro já mostrado na função
+        
+        try:
+            # Mostrar janela de progresso
+            progress_window = tk.Toplevel(self.root)
+            progress_window.title("Otimizando...")
+            progress_window.geometry("350x120")
+            progress_window.transient(self.root)
+            progress_window.grab_set()
             
-            if len(available_for_short) > 0:
-                col1, col2 = st.columns([2, 1])
-                
-                with col1:
-                    short_assets = st.multiselect(
-                        "Selecione ativos para posição short:",
-                        options=available_for_short,
-                        help="Estes ativos terão pesos negativos (venda a descoberto)"
-                    )
-                
-                if len(short_assets) > 0:
-                    st.markdown("**Defina os pesos negativos:**")
-                    
-                    # Criar sliders para cada ativo short
-                    cols = st.columns(min(3, len(short_assets)))
-                    for idx, asset in enumerate(short_assets):
-                        with cols[idx % 3]:
-                            weight = st.slider(
-                                f"{asset}",
-                                min_value=-100,
-                                max_value=0,
-                                value=-10,
-                                step=1,
-                                help=f"Peso negativo para {asset} (%). -100% = venda total do ativo"
-                            )
-                            short_weights[asset] = weight / 100
-                    
-                    # Mostrar resumo
-                    total_short = sum(short_weights.values())
-                    st.info(f"📊 Total short: {total_short*100:.1f}% (não entra na soma dos 100% do portfólio)")
+            ttk.Label(progress_window, text="🔄 Otimizando portfólio...").pack(pady=15)
+            progress_bar = ttk.Progressbar(progress_window, mode='indeterminate')
+            progress_bar.pack(pady=10, padx=20, fill='x')
+            progress_bar.start()
+            
+            status_label = ttk.Label(progress_window, text="Inicializando...")
+            status_label.pack(pady=5)
+            
+            # Forçar atualização da interface
+            self.root.update()
+            
+            # Preparar lista completa de ativos
+            all_assets = selected_assets.copy()
+            if len(short_assets) > 0:
+                all_assets.extend(short_assets)
+            
+            status_label.config(text="Inicializando otimizador...")
+            self.root.update()
+            
+            # Inicializar otimizador (SUA CLASSE ORIGINAL!)
+            self.optimizer = PortfolioOptimizer(self.df, all_assets)
+            
+            status_label.config(text="Configurando parâmetros...")
+            self.root.update()
+            
+            # Mapeamento completo de objetivos
+            objective_map = {
+                "Maximizar Sharpe Ratio": 'sharpe',
+                "Maximizar Sortino Ratio": 'sortino',
+                "Minimizar Risco": 'volatility',
+                "Maximizar Inclinação": 'slope',
+                "Maximizar Inclinação/[(1-R²)×Vol]": 'hc10',
+                "Maximizar Qualidade da Linearidade": 'quality_linear',
+                "Maximizar Linearidade do Excesso": 'excess_hc10'
+            }
+            
+            objective_type = objective_map[self.objective_var.get()]
+            min_weight = self.min_weight_var.get() / 100
+            max_weight = self.max_weight_var.get() / 100
+            
+            # Determinar taxa livre de risco
+            if self.has_risk_free and hasattr(self.optimizer, 'risk_free_rate_total'):
+                risk_free_rate = self.optimizer.risk_free_rate_total
             else:
-                st.warning("⚠️ Selecione menos ativos na otimização para liberar opções de short")
-        
-        # Configurações de otimização
-        st.header("⚙️ Configurações da Otimização")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            # Lista de objetivos com condicional
-            objectives_list = [
-                "Maximizar Sharpe Ratio", 
-                "Maximizar Sortino Ratio",
-                "Minimizar Risco", 
-                "Maximizar Inclinação", 
-                "Maximizar Inclinação/[(1-R²)×Vol]"
-            ]
+                risk_free_rate = self.risk_free_var.get() / 100
             
-            # Adicionar objetivo de excesso apenas se taxa livre foi detectada
-            if has_risk_free:
-                objectives_list.append("Maximizar Qualidade da Linearidade")
-                objectives_list.append("Maximizar Linearidade do Excesso")
-                
-            objective = st.selectbox(
-                "🎯 Objetivo da Otimização",
-                objectives_list,
-                help="Escolha o que você quer otimizar. NOVO: Sortino Ratio considera apenas volatilidade negativa!"
-            )
-        
-        with col2:
-            min_weight = st.slider(
-                "📊 Peso mínimo por ativo (%)",
-                min_value=0,
-                max_value=20,
-                value=0,
-                step=1,
-                help="Limite mínimo para cada ativo no portfólio (0% = sem mínimo)"
-            ) / 100
-        
-        with col3:
-            max_weight = st.slider(
-                "📊 Peso máximo por ativo (%)",
-                min_value=5,
-                max_value=100,
-                value=30,
-                step=1,
-                help="Limite máximo para cada ativo no portfólio"
-            ) / 100
-        
-        with col4:
-            # Inicializar otimizador para verificar taxa livre
-            temp_optimizer = PortfolioOptimizer(df, [])
+            status_label.config(text="Executando otimização...")
+            self.root.update()
             
-            if has_risk_free and hasattr(temp_optimizer, 'risk_free_rate_total'):
-                # Mostrar taxa livre detectada como informação
-                detected_rate = temp_optimizer.risk_free_rate_total
-                st.metric(
-                    "🏛️ Taxa de referência",
-                    f"{detected_rate:.2%}",
-                    help="Taxa detectada automaticamente da coluna B (acumulada do período)"
+            # EXECUTAR OTIMIZAÇÃO com todas as funcionalidades
+            if len(short_assets) > 0:
+                # Otimização com shorts
+                self.result = self.optimizer.optimize_portfolio_with_shorts(
+                    selected_assets=selected_assets,
+                    short_assets=short_assets,
+                    short_weights=short_weights,
+                    objective_type=objective_type,
+                    max_weight=max_weight,
+                    min_weight=min_weight,
+                    risk_free_rate=risk_free_rate,
+                    individual_constraints=individual_constraints
                 )
-                used_risk_free_rate = detected_rate
             else:
-                # Campo manual se não detectou
-                used_risk_free_rate = st.number_input(
-                    "🏛️ Taxa de referência (%)",
-                    min_value=0.0,
-                    max_value=100.0,
-                    value=0.0,
-                    step=0.1,
-                    help="Taxa de referência ACUMULADA do período"
-                ) / 100
-                
-        # NOVA SEÇÃO: Restrições Individuais (APÓS definir min_weight e max_weight)
-        use_individual_constraints = False
-        individual_constraints = {}
-        
-        if len(selected_assets) >= 2:
-            st.header("🚫 Restrições Individuais por Ativo (Opcional)")
-            
-            use_individual_constraints = st.checkbox(
-                "Definir limites específicos para alguns ativos",
-                help="Permite definir pesos mínimos e máximos diferentes para ativos específicos"
-            )
-            
-            if use_individual_constraints:
-                # Selecionar quais ativos terão restrições individuais
-                constrained_assets = st.multiselect(
-                    "Selecione os ativos com restrições específicas:",
-                    options=selected_assets,
-                    help="Escolha apenas os ativos que precisam de limites diferentes dos globais"
+                # Otimização normal
+                self.result = self.optimizer.optimize_portfolio(
+                    objective_type=objective_type,
+                    max_weight=max_weight,
+                    min_weight=min_weight,
+                    risk_free_rate=risk_free_rate,
+                    individual_constraints=individual_constraints
                 )
+            
+            # Fechar janela de progresso
+            progress_window.destroy()
+            
+            if self.result['success']:
+                self.display_results()
+                self.display_monthly_tables()  # NOVA: Exibir tabelas mensais
+                self.export_csv_btn.config(state='normal')
+                self.export_excel_btn.config(state='normal')
+                messagebox.showinfo("Sucesso", "🎉 Otimização concluída com sucesso!")
+                # Mudar para aba de resultados
+                self.notebook.select(self.tab_results)
+            else:
+                messagebox.showerror("Erro", f"❌ {self.result['message']}")
                 
-                if len(constrained_assets) > 0:
-                    st.markdown("**Configure os limites para cada ativo selecionado:**")
-                    
-                    # Criar colunas para organizar melhor
-                    num_cols = min(2, len(constrained_assets))
-                    if num_cols > 0:
-                        cols = st.columns(num_cols)
-                    
-                    for idx, asset in enumerate(constrained_assets):
-                        with cols[idx % num_cols] if num_cols > 0 else st.container():
-                            st.markdown(f"**{asset}**")
-                            
-                            # Valores padrão baseados nos limites globais
-                            default_min = min_weight * 100
-                            default_max = max_weight * 100
-                            
-                            # Criar duas colunas para min e max lado a lado
-                            col_min, col_max = st.columns(2)
-                            
-                            with col_min:
-                                asset_min = st.number_input(
-                                    "Mín %",
-                                    min_value=0.0,
-                                    max_value=100.0,
-                                    value=default_min,
-                                    step=0.5,
-                                    key=f"min_{asset}",
-                                    help=f"Peso mínimo para {asset}"
-                                )
-                            
-                            with col_max:
-                                asset_max = st.number_input(
-                                    "Máx %",
-                                    min_value=0.0,
-                                    max_value=100.0,
-                                    value=default_max,
-                                    step=0.5,
-                                    key=f"max_{asset}",
-                                    help=f"Peso máximo para {asset}"
-                                )
-                            
-                            # Validar que min <= max
-                            if asset_min > asset_max:
-                                st.error(f"⚠️ Mínimo deve ser ≤ Máximo")
-                                asset_min = asset_max
-                            
-                            # Guardar apenas os ativos com restrições
-                            individual_constraints[asset] = {
-                                'min': asset_min / 100,
-                                'max': asset_max / 100
-                            }
-                            
-                            # Mostrar range visualmente
-                            if asset_min == asset_max:
-                                st.info(f"🔒 Travado em {asset_min:.1f}%")
-                            else:
-                                st.caption(f"📊 Range: {asset_min:.1f}% - {asset_max:.1f}%")
-                            st.markdown("---")
-                    
-                    # Validar se a soma dos mínimos não excede 100%
-                    # Considerar TODOS os ativos: com restrições individuais + sem restrições (usando min global)
-                    total_min = 0
-                    for asset in selected_assets:
-                        if asset in individual_constraints:
-                            total_min += individual_constraints[asset]['min']
-                        else:
-                            total_min += min_weight
-                    
-                    if total_min > 1.0:
-                        st.error(f"❌ Soma dos mínimos ({total_min*100:.1f}%) excede 100%!")
-                        st.caption("Isso inclui os ativos sem restrições individuais usando o mínimo global")
-                    else:
-                        st.success(f"✅ Soma total dos mínimos: {total_min*100:.1f}%")
+        except Exception as e:
+            if 'progress_window' in locals():
+                progress_window.destroy()
+            messagebox.showerror("Erro", f"Erro durante otimização:\n{str(e)}")
+            
+    def display_results(self):
+        """Exibir resultados COMPLETOS da otimização (TODAS as métricas como no Streamlit)"""
+        if not self.result or not self.result['success']:
+            return
+        
+        metrics = self.result['metrics']
+        
+        # 1. Mostrar métricas COMPLETAS no texto (IDÊNTICAS ao Streamlit)
+        metrics_text = f"""📈 MÉTRICAS DO PORTFÓLIO OTIMIZADO
+
+🎯 RETORNOS:
+• Retorno Total: {metrics['gv_final']:.4%}
+• Retorno Anualizado: {metrics['annual_return']:.4%}
+• Excesso de Retorno: {metrics['excess_return']:.4%}
+
+⚡ RATIOS DE PERFORMANCE:
+• Sharpe Ratio: {metrics['sharpe_ratio']:.4f}
+• Sortino Ratio: {metrics['sortino_ratio']:.4f}
+
+📊 MÉTRICAS DE RISCO:
+• Volatilidade: {metrics['volatility']:.4%}
+• Downside Deviation: {metrics['downside_deviation']:.4%}
+• R²: {metrics['r_squared']:.4f}
+
+⚠️ VALUE AT RISK (VaR):
+• VaR 95% (Diário): {metrics['var_95_daily']:.4%}
+• VaR 99% (Diário): {metrics['var_99_daily']:.4%}
+• CVaR 95% (Diário): {metrics['cvar_95_daily']:.4%}
+• CVaR 99% (Diário): {metrics['cvar_99_daily']:.4%}
+
+📅 VaR ANUALIZADO:
+• VaR 95% (Anual): {metrics['var_95_annual']:.4%}
+• VaR 99% (Anual): {metrics['var_99_annual']:.4%}
+• CVaR 95% (Anual): {metrics['cvar_95_annual']:.4%}
+• CVaR 99% (Anual): {metrics['cvar_99_annual']:.4%}
+
+🏛️ TAXA DE REFERÊNCIA:
+• Taxa Usada: {metrics['risk_free_rate']:.4%}
+
+📈 MÉTRICAS AVANÇADAS:
+• Inclinação (Slope): {metrics['slope']:.6f}
+• HC10: {metrics['hc10']:.6f}"""
+        
+        # Adicionar métricas específicas do excesso se disponíveis
+        if self.objective_var.get() == "Maximizar Linearidade do Excesso" and metrics.get('excess_r_squared') is not None:
+            # Calcular métricas do excesso
+            if hasattr(self.optimizer, 'risk_free_returns') and self.optimizer.risk_free_returns is not None:
+                excess_returns_daily = metrics['portfolio_returns_daily'] - self.optimizer.risk_free_returns.values
+                excess_vol = np.std(excess_returns_daily, ddof=0) * np.sqrt(252)
+                mean_excess_daily = np.mean(excess_returns_daily)
+                std_excess_daily = np.std(excess_returns_daily, ddof=0)
+                var_95_excess_daily = mean_excess_daily - 1.65 * std_excess_daily
+                
+                # Retorno anual do excesso
+                excess_total = metrics['gv_final'] - metrics['risk_free_rate']
+                annual_excess_return = (1 + excess_total) ** (252 / len(excess_returns_daily)) - 1
+                
+                metrics_text += f"""
+
+🆕 MÉTRICAS DO EXCESSO DE RETORNO:
+• R² do Excesso: {metrics['excess_r_squared']:.4f}
+• Volatilidade do Excesso: {excess_vol:.4%}
+• VaR 95% do Excesso (Diário): {var_95_excess_daily:.4%}
+• Retorno Anual do Excesso: {annual_excess_return:.4%}
+• Inclinação do Excesso: {metrics['excess_slope']:.6f}
+• HC10 do Excesso: {metrics['excess_hc10']:.6f}"""
+        
+        # Adicionar explicações importantes (como no Streamlit)
+        metrics_text += f"""
+
+💡 EXPLICAÇÕES:
+• VaR vs CVaR:
+  - VaR 95% = {metrics['var_95_daily']:.2%}: Em 95% dos dias você não perderá mais que {abs(metrics['var_95_daily']):.2%}
+  - CVaR 95% = {metrics['cvar_95_daily']:.2%}: Nos 5% piores dias, perderá em média {abs(metrics['cvar_95_daily']):.2%}
+
+• Taxa de Referência: Representa o retorno de um investimento sem risco (ex: CDI, Tesouro).
+  O Sharpe Ratio mede quanto retorno extra você obtém por unidade de risco adicional.
+
+• Sortino Ratio: Similar ao Sharpe, mas considera apenas a volatilidade dos retornos negativos.
+  É mais apropriado pois investidores se preocupam mais com perdas do que com ganhos voláteis.
+
+• Objetivo de Otimização Usado: {self.objective_var.get()}"""
+        
+        self.metrics_text.delete('1.0', tk.END)
+        self.metrics_text.insert('1.0', metrics_text)
+        
+        # 2. Mostrar composição COMPLETA do portfólio
+        portfolio_df = self.optimizer.get_portfolio_summary(self.result['weights'])
+        
+        # Limpar TreeView
+        for item in self.portfolio_tree.get_children():
+            self.portfolio_tree.delete(item)
+        
+        # Inserir dados (incluindo posições negativas se houver)
+        total_positive = 0
+        total_negative = 0
+        
+        # Mostrar TODOS os pesos (incluindo negativos)
+        all_weights = self.result['weights']
+        for i, asset in enumerate(self.result['assets']):
+            weight = all_weights[i]
+            if abs(weight) > 0.001:  # Mostrar se peso > 0.1%
+                weight_pct = weight * 100
+                if weight > 0:
+                    total_positive += weight_pct
+                    color_tag = 'positive'
                 else:
-                    st.info("👆 Selecione os ativos que precisam de limites específicos")
-# Botão de otimização
-        if st.button("🚀 OTIMIZAR PORTFÓLIO", type="primary", use_container_width=True):
+                    total_negative += weight_pct
+                    color_tag = 'negative'
+                
+                # Inserir com formatação
+                if weight < 0:
+                    item = self.portfolio_tree.insert('', 'end', values=(asset, f"{weight_pct:.2f}% (SHORT)"))
+                else:
+                    item = self.portfolio_tree.insert('', 'end', values=(asset, f"{weight_pct:.2f}%"))
+        
+        # Adicionar linha de total
+        self.portfolio_tree.insert('', 'end', values=("─" * 20, "─" * 10))
+        self.portfolio_tree.insert('', 'end', values=("TOTAL LONG", f"{total_positive:.1f}%"))
+        if abs(total_negative) > 0.001:
+            self.portfolio_tree.insert('', 'end', values=("TOTAL SHORT", f"{total_negative:.1f}%"))
+        
+        # 3. Criar gráfico de evolução COMPLETO
+        self.create_performance_chart()
+    
+    def create_performance_chart(self):
+        """Criar gráfico de performance completo"""
+        # Limpar frame do gráfico
+        for widget in self.chart_frame.winfo_children():
+            widget.destroy()
+        
+        # Criar figura matplotlib
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Dados do gráfico
+        periods = range(1, len(self.result['metrics']['portfolio_cumulative']) + 1)
+        portfolio_cumulative = self.result['metrics']['portfolio_cumulative'] * 100
+        
+        # Plot principal
+        ax.plot(periods, portfolio_cumulative, 'b-', linewidth=2.5, label='Portfólio Otimizado')
+        
+        # Se tem taxa livre, adicionar TODAS as linhas
+        if hasattr(self.optimizer, 'risk_free_cumulative') and self.optimizer.risk_free_cumulative is not None:
+            risk_free_cumulative = self.optimizer.risk_free_cumulative * 100
+            ax.plot(periods, risk_free_cumulative, color='orange', linestyle='--', linewidth=2, 
+                   label='Taxa de Referência')
             
-            # Verificar novamente se há ativos suficientes
-            if len(selected_assets) < 2:
-                st.error("❌ Selecione pelo menos 2 ativos para otimização")
-            else:
-                with st.spinner("🔄 Otimizando... Aguarde alguns segundos"):
-                    try:
-                        # Preparar lista completa de ativos (selected + short)
-                        all_assets = selected_assets.copy()
-                        if use_short and len(short_assets) > 0:
-                            all_assets.extend(short_assets)
-                        
-                        # Inicializar otimizador com TODOS os ativos
-                        optimizer = PortfolioOptimizer(df, all_assets)
-                        
-                        # Usar taxa livre detectada ou manual
-                        if has_risk_free and hasattr(optimizer, 'risk_free_rate_total'):
-                            final_risk_free_rate = optimizer.risk_free_rate_total
-                        else:
-                            final_risk_free_rate = used_risk_free_rate
-                        
-                        # Definir tipo de objetivo
-                        if objective == "Maximizar Sharpe Ratio":
-                            obj_type = 'sharpe'
-                        elif objective == "Maximizar Sortino Ratio":
-                            obj_type = 'sortino'
-                        elif objective == "Minimizar Risco":
-                            obj_type = 'volatility'
-                        elif objective == "Maximizar Inclinação":
-                            obj_type = 'slope'
-                        elif objective == "Maximizar Inclinação/[(1-R²)×Vol]":
-                            obj_type = 'hc10'
-                        elif objective == "Maximizar Qualidade da Linearidade":
-                            obj_type = 'quality_linear'
-                        elif objective == "Maximizar Linearidade do Excesso":
-                            obj_type = 'excess_hc10'    
-                        
-                        # Preparar restrições individuais se habilitadas
-                        constraints_to_use = individual_constraints if use_individual_constraints else None
-                        
-                        # Executar otimização
-                        if use_short and len(short_assets) > 0:
-                            # Otimização com shorts
-                            result = optimizer.optimize_portfolio_with_shorts(
-                                selected_assets=selected_assets,
-                                short_assets=short_assets,
-                                short_weights=short_weights,
-                                objective_type=obj_type,
-                                max_weight=max_weight,
-                                min_weight=min_weight,
-                                risk_free_rate=final_risk_free_rate,
-                                individual_constraints=constraints_to_use
-                            )
-                        else:
-                            # Otimização normal
-                            result = optimizer.optimize_portfolio(
-                                objective_type=obj_type,
-                                target_return=None,
-                                max_weight=max_weight,
-                                min_weight=min_weight,
-                                risk_free_rate=final_risk_free_rate,
-                                individual_constraints=constraints_to_use
-                            )
-                        
-                        if result['success']:
-                            st.success("🎉 Otimização concluída com sucesso!")
-                            
-                            # Métricas principais
-                            metrics = result['metrics']
-                            
-                            # Primeira linha de métricas
-                            col1, col2, col3, col4, col5 = st.columns(5)
-                            
-                            with col1:
-                                st.metric(
-                                    "📈 Retorno Total", 
-                                    f"{metrics['gv_final']:.2%}",
-                                    help="Retorno acumulado total"
-                                )
-                            
-                            with col2:
-                                st.metric(
-                                    "📅 Ganho Anual", 
-                                    f"{metrics['annual_return']:.2%}",
-                                    help="Retorno anualizado do portfólio"
-                                )
-                            
-                            with col3:
-                                st.metric(
-                                    "📊 Volatilidade", 
-                                    f"{metrics['volatility']:.2%}",
-                                    help="Risco anualizado (DESVPAD.P × √252)"
-                                )
-                            
-                            with col4:
-                                st.metric(
-                                    "⚡ Sharpe Ratio", 
-                                    f"{metrics['sharpe_ratio']:.3f}",
-                                    help=f" (Retorno Total - Taxa de referência) / Volatilidade\nTaxa de referência usada: {metrics['risk_free_rate']:.2%}"
-                                )
-                            
-                            with col5:
-                                st.metric(
-                                    "🔥 Sortino Ratio", 
-                                    f"{metrics['sortino_ratio']:.3f}",
-                                    help="Similar ao Sharpe, mas considera apenas volatilidade negativa (downside risk)"
-                                )
-                            
-                            
-                            # Segunda linha - Métricas de risco e taxa de referência
-                            st.subheader("📊 Métricas de Risco e Taxa de referência")
-                            col1, col2, col3, col4, col5, col6 = st.columns(6)
-                            
-                            with col1:
-                                st.metric(
-                                    "📈 R²", 
-                                    f"{metrics['r_squared']:.3f}",
-                                    help="Qualidade da linearidade da tendência"
-                                )
-                            
-                            with col2:
-                                st.metric(
-                                    "⚠️ VaR 95% (Diário)", 
-                                    f"{metrics['var_95_daily']:.2%}",
-                                    help="Perda máxima esperada em 95% dos dias"
-                                )
-                            
-                            with col3:
-                                st.metric(
-                                    "📉 CVaR 95% (Diário)", 
-                                    f"{metrics['cvar_95_daily']:.2%}",
-                                    help="Perda média nos 5% piores dias"
-                                )
-                            
-                            with col4:
-                                st.metric(
-                                    "📉 Downside Deviation", 
-                                    f"{metrics['downside_deviation']:.2%}",
-                                    help="Volatilidade anualizada apenas dos retornos negativos"
-                                )
-                            
-                            with col5:
-                                st.metric(
-                                    "🏛️ Taxa de referência", 
-                                    f"{metrics['risk_free_rate']:.2%}",
-                                    help="Taxa de referência acumulada do período usada no cálculo"
-                                )
-                            
-                            with col6:
-                                st.metric(
-                                    "📈 Retorno do Excesso", 
-                                    f"{metrics['excess_return']:.2%}",
-                                    help="Retorno Total - Taxa de referência (numerador do Sharpe Ratio)"
-                                )
-                            
-                            # NOVO: Se otimizou excesso, mostrar métricas específicas
-                            if objective == "Maximizar Linearidade do Excesso" and metrics.get('excess_r_squared') is not None:
-                                st.subheader("🆕 Métricas de Linearidade do Excesso")
-                                col1, col2, col3, col4 = st.columns(4)  # Era 3, agora é 4
-                                
-                                # Calcular métricas do excesso
-                                if hasattr(optimizer, 'risk_free_returns') and optimizer.risk_free_returns is not None:
-                                    excess_returns_daily = metrics['portfolio_returns_daily'] - optimizer.risk_free_returns.values
-                                    excess_vol = np.std(excess_returns_daily, ddof=0) * np.sqrt(252)
-                                    
-                                    # NOVO: VaR 95% do Excesso
-                                    mean_excess_daily = np.mean(excess_returns_daily)
-                                    std_excess_daily = np.std(excess_returns_daily, ddof=0)
-                                    var_95_excess_daily = mean_excess_daily - 1.65 * std_excess_daily
-                                    
-                                    # NOVO: Retorno anual do excesso
-                                    excess_total = metrics['gv_final'] - metrics['risk_free_rate']
-                                    annual_excess_return = (1 + excess_total) ** (252 / len(excess_returns_daily)) - 1
-                                else:
-                                    excess_vol = 0
-                                    var_95_excess_daily = 0
-                                    annual_excess_return = 0
-                                
-                                with col1:
-                                    st.metric(
-                                        "📊 R² do Excesso", 
-                                        f"{metrics['excess_r_squared']:.3f}",
-                                        help="Qualidade da linearidade do excesso (quanto mais próximo de 1, mais linear)"
-                                    )
-                                
-                                with col2:
-                                    st.metric(
-                                        "📊 Volatilidade do Excesso", 
-                                        f"{excess_vol:.2%}",
-                                        help="Volatilidade anualizada do excesso de retorno (desvio padrão do excesso × √252)"
-                                    )
-                                
-                                with col3:
-                                    st.metric(
-                                        "⚠️ VaR 95% (Diário) do Excesso", 
-                                        f"{var_95_excess_daily:.2%}",
-                                        help="VaR 95% calculado sobre os retornos do excesso diário"
-                                    )
-                                
-                                with col4:
-                                    st.metric(
-                                        "📅 Retorno Anual do Excesso", 
-                                        f"{annual_excess_return:.2%}",
-                                        help="Retorno anualizado do excesso de retorno"
-                                    )
-                            
-                            # Explicação sobre VaR e Taxa Livre de Risco
-                            st.info(
-                                "💡 **VaR vs CVaR**: \n"
-                                f"• VaR 95% = {metrics['var_95_daily']:.2%}: Em 95% dos dias você não perderá mais que {abs(metrics['var_95_daily']):.2%}\n"
-                                f"• CVaR 95% = {metrics['cvar_95_daily']:.2%}: Nos 5% piores dias, perderá em média {abs(metrics['cvar_95_daily']):.2%}\n\n"
-                                "🏛️ **Taxa Livre de Risco**: Representa o retorno de um investimento sem risco (ex: CDI, Tesouro). "
-                                "O Sharpe Ratio mede quanto retorno extra você obtém por unidade de risco adicional.\n\n"
-                                "🔥 **Sortino Ratio**: Similar ao Sharpe, mas considera apenas a volatilidade dos retornos negativos. "
-                                "É mais apropriado pois investidores se preocupam mais com perdas do que com ganhos voláteis."
-                            )
-                            
-                            # Composição do portfólio
-                            st.header("📊 Composição do Portfólio Otimizado")
+            # Excesso de retorno
+            excess = portfolio_cumulative - risk_free_cumulative
+            ax.plot(periods, excess, 'g:', linewidth=2, label='Excesso de Retorno')
+        
+        # Configurar gráfico
+        ax.set_title('Evolução do Retorno Acumulado', fontsize=14, fontweight='bold')
+        ax.set_xlabel('Dias de Negociação')
+        ax.set_ylabel('Retorno Acumulado (%)')
+        ax.legend(loc='upper left')
+        ax.grid(True, alpha=0.3)
+        
+        # Anotação com retorno final
+        final_return = self.result['metrics']['gv_final']
+        ax.annotate(f'Retorno Final: {final_return:.2%}', 
+                   xy=(len(periods), final_return * 100),
+                   xytext=(-60, -30), textcoords='offset points',
+                   bbox=dict(boxstyle='round,pad=0.5', fc='yellow', alpha=0.7),
+                   arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0'))
+        
+        # Adicionar ao Tkinter
+        canvas = FigureCanvasTkAgg(fig, self.chart_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill='both', expand=True)
+        
+        # Toolbar para zoom/pan
+        from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+        toolbar = NavigationToolbar2Tk(canvas, self.chart_frame)
+        toolbar.update()
+        
+        plt.tight_layout()
 
-                            portfolio_df = optimizer.get_portfolio_summary(result['weights'])
 
-                            col1, col2 = st.columns([1, 1])
+def main():
+    """Função principal"""
+    root = tk.Tk()
+    
+    # Configurar estilo
+    style = ttk.Style()
+    style.theme_use('clam')  # Tema mais moderno
+    
+    # Configurações de estilo personalizadas
+    style.configure("Accent.TButton", background="#0078d4", foreground="white")
+    
+    # Criar aplicação
+    app = PortfolioOptimizerGUI(root)
+    
+    # Executar
+    root.mainloop()
 
-                            with col1:
-                                st.subheader("📋 Tabela de Pesos")
-                                # Formatar tabela com duas colunas de pesos
-                                portfolio_display = portfolio_df.copy()
-                                portfolio_display['Peso Inicial (%)'] = portfolio_display['Peso Inicial (%)'].apply(lambda x: f"{x:.2f}%")
-                                portfolio_display['Peso Atual (%)'] = portfolio_display['Peso Atual (%)'].apply(lambda x: f"{x:.2f}%")
-                                
-                                st.dataframe(portfolio_display, use_container_width=True, hide_index=True)
-                                
-                                # Mostrar totais para verificação
-                                total_initial = portfolio_df['Peso Inicial (%)'].sum()
-                                total_current = portfolio_df['Peso Atual (%)'].sum()
-                                
-                                # Criar duas colunas para os totais
-                                col_total1, col_total2 = st.columns(2)
-                                with col_total1:
-                                    st.info(f"✅ Total inicial: {total_initial:.1f}%")
-                                with col_total2:
-                                    st.info(f"🔄 Total atual: {total_current:.1f}%")
-                                
-                                # Explicação sobre os pesos
-                                st.markdown("""
-                                **💡 Interpretação:**
-                                - **Peso Inicial**: Alocação recomendada pela otimização
-                                - **Peso Atual**: Alocação real após evolução dos preços
-                                - A diferença mostra como o mercado "rebalanceou" naturalmente o portfólio
-                                """)
-
-                            with col2:
-                                st.subheader("🥧 Distribuição Atual")
-                                if len(portfolio_df) > 0:
-                                    fig = px.pie(
-                                        portfolio_df,
-                                        values='Peso Atual (%)',
-                                        names='Ativo',
-                                        hole=0.4,
-                                        color_discrete_sequence=px.colors.qualitative.Set3,
-                                        title="Pesos Após Evolução dos Preços"
-                                    )
-                                    fig.update_traces(
-                                        textposition='inside', 
-                                        textinfo='percent+label',
-                                        textfont_size=12
-                                    )
-                                    fig.update_layout(
-                                        showlegend=True,
-                                        height=400
-                                    )
-                                    st.plotly_chart(fig, use_container_width=True)
-                                else:
-                                    st.warning("Nenhum ativo selecionado na otimização")
-                            
-                            # Gráfico de evolução do portfólio COM TAXA LIVRE
-                            st.header("📈 Evolução do Portfólio Otimizado")
-                            
-                            # Criar DataFrame para o gráfico
-                            periods = range(1, len(metrics['portfolio_cumulative']) + 1)
-                            
-                            # Criar figura com múltiplas linhas
-                            fig_line = go.Figure()
-                            
-                            # Linha do portfólio
-                            fig_line.add_trace(go.Scatter(
-                                x=list(periods),
-                                y=metrics['portfolio_cumulative'] * 100,
-                                mode='lines',
-                                name='Portfólio Otimizado',
-                                line=dict(color='#1f77b4', width=2.5)
-                            ))
-                            
-                            # Se temos taxa livre, adicionar linha
-                            if hasattr(optimizer, 'risk_free_cumulative') and optimizer.risk_free_cumulative is not None:
-                                fig_line.add_trace(go.Scatter(
-                                    x=list(periods),
-                                    y=optimizer.risk_free_cumulative * 100,
-                                    mode='lines',
-                                    name='Taxa de Referência',
-                                    line=dict(color='#ff7f0e', width=2, dash='dash')
-                                ))
-                                
-                                # Adicionar linha de excesso de retorno
-                                excess_cumulative = metrics['portfolio_cumulative'] - optimizer.risk_free_cumulative.values
-                                fig_line.add_trace(go.Scatter(
-                                    x=list(periods),
-                                    y=excess_cumulative * 100,
-                                    mode='lines',
-                                    name='Excesso de Retorno',
-                                    line=dict(color='#2ca02c', width=2, dash='dot')
-                                ))
-                            
-                            # Personalizar layout
-                            fig_line.update_layout(
-                                title='Evolução do Retorno Acumulado',
-                                xaxis_title='Dias de Negociação',
-                                yaxis_title='Retorno Acumulado (%)',
-                                hovermode='x unified',
-                                height=500,
-                                showlegend=True,
-                                legend=dict(
-                                    yanchor="top",
-                                    y=0.99,
-                                    xanchor="left",
-                                    x=0.01
-                                ),
-                                xaxis=dict(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)'),
-                                yaxis=dict(showgrid=True, gridwidth=1, gridcolor='rgba(128,128,128,0.2)')
-                            )
-                            
-                            # Adicionar anotação com retorno final
-                            fig_line.add_annotation(
-                                x=len(periods),
-                                y=metrics['gv_final'] * 100,
-                                text=f"Retorno Final: {metrics['gv_final']:.2%}",
-                                showarrow=True,
-                                arrowhead=2,
-                                arrowsize=1,
-                                arrowwidth=2,
-                                arrowcolor="#1f77b4",
-                                ax=-50,
-                                ay=-30,
-                                bordercolor="#1f77b4",
-                                borderwidth=2,
-                                borderpad=4,
-                                bgcolor="white",
-                                opacity=0.9
-                            )
-                            
-                            st.plotly_chart(fig_line, use_container_width=True)
-                            
-                            # NOVA SEÇÃO: Tabela de Retornos Mensais - VERSÃO VERTICAL
-                            st.header("📅 Performance Mensal Comparativa")
-
-                            try:
-                                # Criar tabela de retornos mensais
-                                dates = getattr(optimizer, 'dates', None)
-                                risk_free_returns = getattr(optimizer, 'risk_free_returns', None)
-                                
-                                monthly_table, excess_table = create_monthly_returns_table(
-                                    optimizer.returns_data, 
-                                    result['weights'],
-                                    dates,
-                                    risk_free_returns
-                                )
-                                
-                                # Função para aplicar cores baseadas no valor
-                                def color_negative_red(val):
-                                    """
-                                    Aplica cor vermelha para valores negativos e verde para positivos
-                                    """
-                                    if val == "-" or pd.isna(val):
-                                        return 'color: gray'
-                                    
-                                    # Extrair valor numérico da string formatada
-                                    try:
-                                        if isinstance(val, str) and '%' in val:
-                                            numeric_val = float(val.replace('%', '')) / 100
-                                        else:
-                                            numeric_val = float(val)
-                                        
-                                        if numeric_val < 0:
-                                            return 'color: red; font-weight: bold'
-                                        elif numeric_val > 0:
-                                            return 'color: green; font-weight: bold'
-                                        else:
-                                            return 'color: black'
-                                    except:
-                                        return 'color: black'
-                                
-                                # 1. TABELA DO PORTFÓLIO
-                                st.subheader("📊 Retornos Mensais do Portfólio Otimizado")
-                                monthly_display = monthly_table.copy()
-                                
-                                # Aplicar formatação de porcentagem
-                                for col in monthly_display.columns:
-                                    monthly_display[col] = monthly_display[col].apply(
-                                        lambda x: f"{x:.2%}" if pd.notna(x) else "-"
-                                    )
-                                
-                                # Aplicar estilo com cores
-                                styled_table = monthly_display.style.applymap(color_negative_red)
-                                
-                                # Exibir tabela com cores
-                                st.dataframe(
-                                    styled_table,
-                                    use_container_width=True,
-                                    height=300
-                                )
-                                
-                                # 2. TABELA DA TAXA DE REFERÊNCIA (se disponível)
-                                if excess_table is not None:
-                                    # Recalcular a tabela da taxa de referência
-                                    # (Precisa refazer porque a função só retorna monthly_table e excess_table)
-                                    
-                                    # Calcular novamente para obter rf_pivot
-                                    if risk_free_returns is not None:
-                                        # Mesmo processo da função create_monthly_returns_table
-                                        risk_free_cumulative = np.cumsum(risk_free_returns.values)
-                                        risk_free_patrimonio = 1 + risk_free_cumulative
-                                        
-                                        if dates is not None:
-                                            risk_free_df = pd.DataFrame({
-                                                'patrimonio': risk_free_patrimonio
-                                            }, index=dates)
-                                        else:
-                                            start_date = pd.Timestamp('2020-01-01')
-                                            sim_dates = pd.date_range(start=start_date, periods=len(risk_free_patrimonio), freq='D')
-                                            risk_free_df = pd.DataFrame({
-                                                'patrimonio': risk_free_patrimonio
-                                            }, index=sim_dates)
-                                        
-                                        monthly_rf_patrimonio = risk_free_df['patrimonio'].resample('M').last()
-                                        monthly_risk_free = monthly_rf_patrimonio.pct_change().fillna(monthly_rf_patrimonio.iloc[0] - 1)
-                                        
-                                        # Criar tabela pivotada para taxa livre
-                                        rf_monthly_df = pd.DataFrame({
-                                            'Year': monthly_risk_free.index.year,
-                                            'Month': monthly_risk_free.index.month,
-                                            'Return': monthly_risk_free.values
-                                        })
-                                        
-                                        rf_pivot = rf_monthly_df.pivot(index='Year', columns='Month', values='Return')
-                                        
-                                        # Renomear colunas
-                                        month_names = {
-                                            1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr', 5: 'Mai', 6: 'Jun',
-                                            7: 'Jul', 8: 'Ago', 9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'
-                                        }
-                                        rf_pivot.columns = [month_names.get(col, f'M{col}') for col in rf_pivot.columns]
-                                        
-                                        # Calcular total anual da taxa livre
-                                        rf_yearly = []
-                                        for year in rf_pivot.index:
-                                            year_data = rf_pivot.loc[year].dropna()
-                                            if len(year_data) > 0:
-                                                annual_return = (1 + year_data).prod() - 1
-                                                rf_yearly.append(annual_return)
-                                            else:
-                                                rf_yearly.append(np.nan)
-                                        
-                                        rf_pivot['Total Anual'] = rf_yearly
-                                        
-                                        # Exibir tabela da taxa de referência
-                                        st.subheader("🏛️ Retornos Mensais da Taxa de Referência")
-                                        
-                                        rf_display = rf_pivot.copy()
-                                        
-                                        # Aplicar formatação
-                                        for col in rf_display.columns:
-                                            rf_display[col] = rf_display[col].apply(
-                                                lambda x: f"{x:.2%}" if pd.notna(x) else "-"
-                                            )
-                                        
-                                        # Aplicar estilo
-                                        styled_rf = rf_display.style.applymap(color_negative_red)
-                                        
-                                        # Exibir
-                                        st.dataframe(
-                                            styled_rf,
-                                            use_container_width=True,
-                                            height=300
-                                        )
-                                
-                                # 3. TABELA DE EXCESSO (se disponível)
-                                if excess_table is not None:
-                                    st.subheader("📈 Excesso de Retorno Mensal (Portfólio - Taxa de Referência)")
-                                    
-                                    excess_display = excess_table.copy()
-                                    
-                                    # Aplicar formatação
-                                    for col in excess_display.columns:
-                                        excess_display[col] = excess_display[col].apply(
-                                            lambda x: f"{x:.2%}" if pd.notna(x) else "-"
-                                        )
-                                    
-                                    # Aplicar estilo
-                                    styled_excess = excess_display.style.applymap(color_negative_red)
-                                    
-                                    # Exibir
-                                    st.dataframe(
-                                        styled_excess,
-                                        use_container_width=True,
-                                        height=300
-                                    )
-                                
-                                # Explicação das tabelas
-                                st.info(
-                                    "💡 **Como interpretar:**\n"
-                                    "• **Verde**: Retorno positivo no mês\n"
-                                    "• **Vermelho**: Retorno negativo no mês\n"
-                                    "• **Total Anual**: Performance acumulada do ano\n"
-                                    "• **Excesso**: Quanto o portfólio superou (ou ficou abaixo) da taxa de referência"
-                                )
-                                
-                            except Exception as e:
-                                st.warning(f"⚠️ Não foi possível gerar as tabelas mensais: {str(e)}")
-                                st.info("💡 Isso pode acontecer se os dados não tiverem informações de data ou forem insuficientes.")
-                            
-                         
-                        else:
-                            st.error(f"❌ {result['message']}")
-                    
-                    except Exception as e:
-                        st.error(f"❌ Erro durante a otimização: {str(e)}")
-                        st.info("💡 Verifique se os dados estão no formato correto (primeira coluna = datas, demais = retornos)")
-
-    except Exception as e:
-        st.error(f"❌ Erro ao ler arquivo: {e}")
-
-else:
-    # Mensagem quando não há arquivo
-    st.info("👈 Faça upload de uma planilha Excel para começar")
-    
-    # Verificar se GitHub está configurado
-    if GITHUB_USER == "SEU_USUARIO_GITHUB":
-        st.warning(
-            "⚠️ **Para habilitar os dados de exemplo:**\n\n"
-            "1. **Configure o GitHub** no código:\n"
-            "   - Substitua `GITHUB_USER` pelo seu usuário\n"
-            "   - Substitua `GITHUB_REPO` pelo nome do seu repositório\n\n"
-            "2. **Crie a pasta** `sample_data/` no seu repositório\n\n"
-            "3. **Faça upload** dos arquivos Excel de exemplo\n\n"
-            "4. **Pronto!** Os botões de exemplo funcionarão automaticamente"
-        )
-    
-    # Link para download dos dados
-    st.markdown("### 📂 Dados Disponíveis")
-    st.markdown(
-        "**Baixe planilhas com dados históricos de ativos:**\n\n"
-        "🔗 [Acessar pasta no Google Drive](https://drive.google.com/drive/folders/1t8EcZZqGqPIH3pzZ-DdBytrr3Rb1TuwV?usp=sharing)"
-    )
-    st.markdown("---")
-    
-    # Instruções
-    st.markdown("""
-    ### 📝 Como usar:
-    
-    1. **Baixe uma planilha** do link acima ou use sua própria
-    
-    2. **Estruture sua planilha** assim:
-       - Primeira coluna: Datas
-       - Segunda coluna: Coluna de referência (CDI, IBOV, etc)
-       - Outras colunas: Retornos de cada ativo (base 0)
-    
-    3. **Faça upload** do arquivo Excel
-    
-    4. **Configure** os parâmetros de otimização
-    
-    5. **Clique em otimizar** e receba os pesos ideais!
-    
-    ### 💡 Dica:
-    Se a célula B1 tiver no nome "Taxa Livre", "CDI", "Selic", "Ref" ou "IBOV" o sistema detecta e calcula o retorno dessa coluna!
-    """)
-
-# Rodapé
-st.markdown("---")
-st.markdown("*Desenvolvido com Streamlit - Otimização Portfólio v2.0* 🚀")
-
+if __name__ == "__main__":
+    main()
