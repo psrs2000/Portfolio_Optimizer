@@ -4,135 +4,6 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from optimizer import PortfolioOptimizer
-import yfinance as yf
-from datetime import datetime, timedelta
-
-# =============================================================================
-# FUNÇÕES PARA INTEGRAÇÃO COM YAHOO FINANCE
-# =============================================================================
-
-def buscar_dados_yahoo(simbolos, data_inicio, data_fim, sufixo=".SA"):
-    """
-    Busca dados do Yahoo Finance (adaptado do seu código)
-    """
-    dados_historicos = {}
-    simbolos_com_erro = []
-    
-    start_date = data_inicio.strftime('%Y-%m-%d')
-    end_date = data_fim.strftime('%Y-%m-%d')
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    for i, simbolo in enumerate(simbolos):
-        try:
-            status_text.text(f"Buscando {simbolo}... ({i+1}/{len(simbolos)})")
-            progress_bar.progress((i + 1) / len(simbolos))
-            
-            simbolo_completo = simbolo + sufixo if sufixo else simbolo
-            ticker = yf.Ticker(simbolo_completo)
-            hist = ticker.history(start=start_date, end=end_date, interval="1d")
-            
-            if not hist.empty and len(hist) > 5:  # Pelo menos 5 dias de dados
-                dados_historicos[simbolo] = hist
-            else:
-                simbolos_com_erro.append(simbolo)
-                
-        except Exception as e:
-            simbolos_com_erro.append(simbolo)
-    
-    progress_bar.empty()
-    status_text.empty()
-    
-    return dados_historicos, simbolos_com_erro
-
-def criar_consolidado_yahoo(dados_historicos):
-    """
-    Cria DataFrame consolidado com preços de fechamento
-    """
-    if not dados_historicos:
-        return None
-    
-    lista_dfs = []
-    
-    for simbolo, dados in dados_historicos.items():
-        if 'Close' in dados.columns and not dados['Close'].empty:
-            df_temp = pd.DataFrame({simbolo: dados['Close']})
-            
-            # Remove timezone se houver
-            if hasattr(df_temp.index, 'tz') and df_temp.index.tz is not None:
-                df_temp.index = df_temp.index.tz_localize(None)
-            
-            lista_dfs.append(df_temp)
-    
-    if lista_dfs:
-        dados_consolidados = pd.concat(lista_dfs, axis=1, sort=True)
-        dados_consolidados.index.name = "Data"
-        return dados_consolidados
-    
-    return None
-
-def transformar_base_zero(df_precos):
-    """
-    Transforma dados de preços para base 0 (adaptado do seu Base_0.py)
-    """
-    if df_precos is None or df_precos.empty:
-        return None, []
-    
-    df_limpo = df_precos.copy()
-    
-    # 1. Remove colunas com primeiro valor inválido
-    colunas_removidas = []
-    for coluna in df_limpo.columns:
-        if len(df_limpo[coluna]) == 0:
-            colunas_removidas.append(coluna)
-            continue
-            
-        primeiro_valor = df_limpo[coluna].iloc[0]
-        if pd.isna(primeiro_valor) or primeiro_valor == 0:
-            colunas_removidas.append(coluna)
-    
-    if colunas_removidas:
-        df_limpo = df_limpo.drop(columns=colunas_removidas)
-    
-    # Verifica se ainda há colunas válidas
-    if df_limpo.empty:
-        return None, colunas_removidas
-    
-    # 2. Preenche valores faltantes/zero (CORRIGIDO - sem method='ffill')
-    for coluna in df_limpo.columns:
-        df_limpo[coluna] = df_limpo[coluna].replace(0, np.nan)
-        df_limpo[coluna] = df_limpo[coluna].ffill()  # Novo método
-    
-    df_limpo = df_limpo.fillna(0)
-    
-    # 3. Calcula base zero
-    df_base_zero = pd.DataFrame(index=df_limpo.index)
-    
-    for coluna in df_limpo.columns:
-        valores = df_limpo[coluna].values
-        
-        if len(valores) == 0:
-            continue
-            
-        cota_1 = valores[0]  # Primeiro valor como referência
-        
-        if cota_1 == 0:  # Evita divisão por zero
-            continue
-        
-        novos_valores = np.zeros(len(valores))
-        novos_valores[0] = 0.0  # Primeiro valor sempre 0
-        
-        # Calcula os demais: (Preço_n - Preço_{n-1}) / Preço_1
-        for i in range(1, len(valores)):
-            cota_n = valores[i]
-            cota_anterior = valores[i-1]
-            novo_valor = (cota_n - cota_anterior) / cota_1
-            novos_valores[i] = novo_valor
-        
-        df_base_zero[coluna] = novos_valores
-    
-    return df_base_zero, colunas_removidas
 
 # Configuração da página
 st.set_page_config(
@@ -421,52 +292,37 @@ def load_from_github(filename):
 def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_returns=None):
     """
     Cria tabela de retornos mensais do portfólio otimizado
-    MÉTODO CORRIGIDO: Via patrimônio acumulado
     """
     # Calcular retornos diários do portfólio
     portfolio_returns_daily = np.dot(returns_data.values, weights)
     
-    # Calcular patrimônio acumulado (base 1)
-    portfolio_cumulative = np.cumsum(portfolio_returns_daily)
-    portfolio_patrimonio = 1 + portfolio_cumulative
+    # Criar DataFrame com retornos diários
+    portfolio_df = pd.DataFrame({
+        'returns': portfolio_returns_daily
+    }, index=range(len(portfolio_returns_daily)))
+    
+    # Adicionar taxa livre se disponível
+    if risk_free_returns is not None:
+        portfolio_df['risk_free'] = risk_free_returns.values
     
     # Usar datas reais se disponíveis, senão simular
     if dates is not None:
-        portfolio_df = pd.DataFrame({
-            'patrimonio': portfolio_patrimonio
-        }, index=dates)
+        portfolio_df.index = dates
     else:
         # Simular datas (assumindo dados diários consecutivos)
         start_date = pd.Timestamp('2020-01-01')
-        dates = pd.date_range(start=start_date, periods=len(portfolio_patrimonio), freq='D')
-        portfolio_df = pd.DataFrame({
-            'patrimonio': portfolio_patrimonio
-        }, index=dates)
+        dates = pd.date_range(start=start_date, periods=len(portfolio_returns_daily), freq='D')
+        portfolio_df.index = dates
     
-    # MÉTODO 1: Patrimônio final de cada mês
-    monthly_patrimonio = portfolio_df['patrimonio'].resample('M').last()
+    # Calcular retornos mensais
+    # Converter retornos diários para retornos compostos mensais
+    portfolio_df['returns_factor'] = 1 + portfolio_df['returns']
+    monthly_returns = portfolio_df['returns_factor'].resample('M').prod() - 1
     
-    # Calcular retornos mensais via pct_change
-    monthly_returns = monthly_patrimonio.pct_change().fillna(monthly_patrimonio.iloc[0] - 1)
-    
-    # Processar taxa livre de risco se disponível
-    monthly_risk_free = None
+    # Calcular retornos mensais da taxa livre se disponível
     if risk_free_returns is not None:
-        # Mesmo processo para taxa livre
-        risk_free_cumulative = np.cumsum(risk_free_returns.values)
-        risk_free_patrimonio = 1 + risk_free_cumulative
-        
-        if dates is not None:
-            risk_free_df = pd.DataFrame({
-                'patrimonio': risk_free_patrimonio
-            }, index=dates)
-        else:
-            risk_free_df = pd.DataFrame({
-                'patrimonio': risk_free_patrimonio
-            }, index=dates)
-        
-        monthly_rf_patrimonio = risk_free_df['patrimonio'].resample('M').last()
-        monthly_risk_free = monthly_rf_patrimonio.pct_change().fillna(monthly_rf_patrimonio.iloc[0] - 1)
+        portfolio_df['risk_free_factor'] = 1 + portfolio_df['risk_free']
+        monthly_risk_free = portfolio_df['risk_free_factor'].resample('M').prod() - 1
     
     # Criar tabela pivotada (anos x meses)
     monthly_df = pd.DataFrame({
@@ -485,12 +341,12 @@ def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_re
     }
     pivot_table.columns = [month_names.get(col, f'M{col}') for col in pivot_table.columns]
     
-    # Calcular total anual CORRIGIDO
+    # Calcular total anual (soma dos retornos mensais compostos)
     yearly_returns = []
     for year in pivot_table.index:
         year_data = pivot_table.loc[year].dropna()
         if len(year_data) > 0:
-            # Retorno anual composto: (1 + jan) × (1 + fev) × ... - 1
+            # Retorno anual composto
             annual_return = (1 + year_data).prod() - 1
             yearly_returns.append(annual_return)
         else:
@@ -500,7 +356,7 @@ def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_re
     
     # Se temos taxa livre, criar tabela comparativa
     comparison_table = None
-    if monthly_risk_free is not None:
+    if risk_free_returns is not None:
         # Criar tabela similar para taxa livre
         rf_monthly_df = pd.DataFrame({
             'Year': monthly_risk_free.index.year,
@@ -533,7 +389,7 @@ with st.sidebar:
     st.header("📁 Carregar Dados")
     
     # Tabs para organizar opções
-    tab_exemplo, tab_upload, tab_yahoo = st.tabs(["📊 Exemplos", "📤 Upload", "🌐 Yahoo Finance"])
+    tab_exemplo, tab_upload = st.tabs(["📊 Exemplos", "📤 Upload"])
     
     with tab_exemplo:
         st.markdown("### Dados de Exemplo")
@@ -580,191 +436,6 @@ with st.sidebar:
                 st.success("✅ Arquivo carregado!")
             except Exception as e:
                 st.error(f"Erro ao ler arquivo: {str(e)}")
-
-    with tab_yahoo:
-        st.markdown("### 🌐 Buscar Online")
-        st.markdown("Busque dados diretamente do Yahoo Finance")
-        
-        # Configuração de símbolos
-        st.markdown("**📝 Símbolos dos Ativos:**")
-        simbolos_input = st.text_area(
-            "Digite os códigos (um por linha):",
-            value="PETR4\nVALE3\nITUB4\nBBDC4\nABEV3",
-            height=120,
-            help="Digite os códigos dos ativos, um por linha. Ex: PETR4, VALE3, etc."
-        )
-        
-        # NOVO: Ativo de Referência
-        st.markdown("**🏛️ Ativo de Referência (Taxa Livre de Risco):**")
-        
-        col_ref1, col_ref2 = st.columns([3, 1])
-        
-        with col_ref1:
-            ativo_referencia = st.text_input(
-                "Código do ativo de referência:",
-                value="BOVA11",
-                help="Ex: BOVA11 (Ibovespa), LFTS11 (CDI), IVV (S&P500)"
-            )
-        
-        with col_ref2:
-            usar_referencia = st.checkbox(
-                "Incluir",
-                value=True,
-                help="Marque para incluir ativo de referência"
-            )
-        
-        # Sugestões rápidas
-        st.markdown("💡 **Sugestões:** BOVA11 (Ibovespa), LFTS11 (CDI), SMAL11 (Small Caps)")
-        
-        # Tipo de ativo
-        tipos_disponiveis = [
-            ("Ações Brasileiras", ".SA"),
-            ("Criptomoedas", ""),
-            ("Ações Americanas", ""),
-            ("ETFs Americanos", "")
-        ]
-        
-        tipo_ativo = st.selectbox(
-            "🏷️ Tipo de Ativo:",
-            tipos_disponiveis,
-            format_func=lambda x: x[0],
-            index=0
-        )
-        sufixo = tipo_ativo[1]
-        
-        # Período
-        st.markdown("**📅 Período:**")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            data_inicio = st.date_input(
-                "Data Início:",
-                value=datetime.now() - timedelta(days=365),
-                max_value=datetime.now().date()
-            )
-        
-        with col2:
-            data_fim = st.date_input(
-                "Data Fim:",
-                value=datetime.now().date(),
-                max_value=datetime.now().date()
-            )
-        
-        # Botão para buscar
-        if st.button("🚀 Buscar e Processar", use_container_width=True, type="primary"):
-            # Validações
-            simbolos_lista = [s.strip().upper() for s in simbolos_input.split('\n') if s.strip()]
-            
-            if len(simbolos_lista) < 2:
-                st.error("❌ Digite pelo menos 2 símbolos")
-            elif data_inicio >= data_fim:
-                st.error("❌ Data de início deve ser anterior à data fim")
-            else:
-                # NOVO: Adicionar ativo de referência à lista se selecionado
-                simbolos_completos = simbolos_lista.copy()
-                if usar_referencia and ativo_referencia.strip():
-                    ativo_ref_clean = ativo_referencia.strip().upper()
-                    if ativo_ref_clean not in simbolos_completos:
-                        simbolos_completos.append(ativo_ref_clean)
-                        st.info(f"📊 Ativo de referência adicionado: {ativo_ref_clean}")
-                
-                with st.spinner("🔄 Buscando dados do Yahoo Finance..."):
-                    # 1. Buscar dados
-                    dados_yahoo, erros = buscar_dados_yahoo(
-                        simbolos_completos, 
-                        datetime.combine(data_inicio, datetime.min.time()),
-                        datetime.combine(data_fim, datetime.min.time()),
-                        sufixo
-                    )
-                    
-                    if dados_yahoo:
-                        st.success(f"✅ Dados obtidos para {len(dados_yahoo)} ativos")
-                        
-                        if erros:
-                            st.warning(f"⚠️ Erros em: {', '.join(erros)}")
-                        
-                        # 2. Consolidar
-                        with st.spinner("🔄 Consolidando dados..."):
-                            df_consolidado = criar_consolidado_yahoo(dados_yahoo)
-                        
-                        # DEBUG: Verificar consolidado
-                        if df_consolidado is not None:
-                            st.success(f"✅ Consolidado criado: {df_consolidado.shape}")
-                            
-                            # 3. Transformar para base 0
-                            with st.spinner("🔄 Transformando para base 0..."):
-                                df_base_zero, removidas = transformar_base_zero(df_consolidado)
-                            
-                            # DEBUG: Verificar transformação
-                            if df_base_zero is not None and not df_base_zero.empty:
-                                st.success(f"✅ Base 0 criada: {df_base_zero.shape}")
-                                
-                                # 4. Preparar para o otimizador com ATIVO DE REFERÊNCIA
-                                try:
-                                    df_final = df_base_zero.copy()
-                                    df_final = df_final.reset_index()  # Data vira primeira coluna
-                                    
-                                    # NOVO: Reorganizar colunas se tem ativo de referência
-                                    if usar_referencia and ativo_referencia.strip():
-                                        ativo_ref_clean = ativo_referencia.strip().upper()
-                                        
-                                        if ativo_ref_clean in df_final.columns:
-                                            # CORREÇÃO: Renomear para que o otimizador detecte
-                                            nome_referencia = f"Taxa_Ref_{ativo_ref_clean}"
-                                            
-                                            # Reorganizar: Data, Taxa_Ref_XXXX, Outros_Ativos
-                                            colunas_reorganizadas = ['Data']
-                                            outras_colunas = [col for col in df_final.columns 
-                                                            if col not in ['Data', ativo_ref_clean]]
-                                            
-                                            # Renomear a coluna do ativo de referência
-                                            df_final = df_final.rename(columns={ativo_ref_clean: nome_referencia})
-                                            
-                                            # Reorganizar colunas: Data, Taxa_Ref, Outros
-                                            colunas_reorganizadas.append(nome_referencia)
-                                            colunas_reorganizadas.extend(outras_colunas)
-                                            
-                                            df_final = df_final[colunas_reorganizadas]
-                                            
-                                            st.info(f"🏛️ Ativo de referência renomeado para: {nome_referencia}")
-                                            st.success(f"✅ Otimizador detectará automaticamente como taxa de referência!")
-                                        else:
-                                            st.warning(f"⚠️ Ativo de referência {ativo_ref_clean} não encontrado nos dados")
-                                    
-                                    # Salvar no session state
-                                    st.session_state['df'] = df_final
-                                    st.session_state['data_source'] = f"Yahoo Finance ({len(dados_yahoo)} ativos)"
-                                    
-                                    st.success("🎉 Dados processados e carregados!")
-                                    
-                                    # Mostrar resumo
-                                    resumo_texto = (
-                                        f"📊 **Resumo:**\n"
-                                        f"• Ativos processados: {len(df_base_zero.columns)}\n"
-                                        f"• Período: {data_inicio.strftime('%d/%m/%Y')} a {data_fim.strftime('%d/%m/%Y')}\n"
-                                        f"• Dias: {len(df_base_zero)} registros\n"
-                                    )
-                                    
-                                    if usar_referencia and ativo_referencia.strip():
-                                        resumo_texto += f"• Ativo de referência: {ativo_referencia.strip().upper()}\n"
-                                    
-                                    if removidas:
-                                        resumo_texto += f"• Removidos: {', '.join(removidas)}"
-                                    
-                                    st.info(resumo_texto)
-                                    
-                                    st.rerun()
-                                    
-                                except Exception as e:
-                                    st.error(f"❌ Erro ao preparar dados: {str(e)}")
-                                    import traceback
-                                    st.code(traceback.format_exc())
-                            else:
-                                st.error("❌ Erro na transformação para base 0")
-                        else:
-                            st.error("❌ Erro ao consolidar dados")
-                    else:
-                        st.error("❌ Nenhum dado encontrado. Verifique os símbolos.")
     
     # Link para Google Drive
     st.markdown("---")
@@ -1264,49 +935,31 @@ if df is not None:
                             
                             # Composição do portfólio
                             st.header("📊 Composição do Portfólio Otimizado")
-
+                            
                             portfolio_df = optimizer.get_portfolio_summary(result['weights'])
-
+                            
                             col1, col2 = st.columns([1, 1])
-
+                            
                             with col1:
                                 st.subheader("📋 Tabela de Pesos")
-                                # Formatar tabela com duas colunas de pesos
+                                # Formatar tabela
                                 portfolio_display = portfolio_df.copy()
-                                portfolio_display['Peso Inicial (%)'] = portfolio_display['Peso Inicial (%)'].apply(lambda x: f"{x:.2f}%")
-                                portfolio_display['Peso Atual (%)'] = portfolio_display['Peso Atual (%)'].apply(lambda x: f"{x:.2f}%")
-                                
+                                portfolio_display['Peso (%)'] = portfolio_display['Peso (%)'].apply(lambda x: f"{x:.2f}%")
                                 st.dataframe(portfolio_display, use_container_width=True, hide_index=True)
                                 
-                                # Mostrar totais para verificação
-                                total_initial = portfolio_df['Peso Inicial (%)'].sum()
-                                total_current = portfolio_df['Peso Atual (%)'].sum()
-                                
-                                # Criar duas colunas para os totais
-                                col_total1, col_total2 = st.columns(2)
-                                with col_total1:
-                                    st.info(f"✅ Total inicial: {total_initial:.1f}%")
-                                with col_total2:
-                                    st.info(f"🔄 Total atual: {total_current:.1f}%")
-                                
-                                # Explicação sobre os pesos
-                                st.markdown("""
-                                **💡 Interpretação:**
-                                - **Peso Inicial**: Alocação recomendada pela otimização
-                                - **Peso Atual**: Alocação real após evolução dos preços
-                                - A diferença mostra como o mercado "rebalanceou" naturalmente o portfólio
-                                """)
-
+                                # Total para verificação
+                                total_weight = portfolio_df['Peso (%)'].sum()
+                                st.info(f"✅ Total alocado: {total_weight:.1f}%")
+                            
                             with col2:
-                                st.subheader("🥧 Distribuição Atual")
+                                st.subheader("🥧 Distribuição Visual")
                                 if len(portfolio_df) > 0:
                                     fig = px.pie(
                                         portfolio_df,
-                                        values='Peso Atual (%)',
+                                        values='Peso (%)',
                                         names='Ativo',
                                         hole=0.4,
-                                        color_discrete_sequence=px.colors.qualitative.Set3,
-                                        title="Pesos Após Evolução dos Preços"
+                                        color_discrete_sequence=px.colors.qualitative.Set3
                                     )
                                     fig.update_traces(
                                         textposition='inside', 
@@ -1398,9 +1051,9 @@ if df is not None:
                             
                             st.plotly_chart(fig_line, use_container_width=True)
                             
-                            # NOVA SEÇÃO: Tabela de Retornos Mensais - VERSÃO VERTICAL
-                            st.header("📅 Performance Mensal Comparativa")
-
+                            # NOVA SEÇÃO: Tabela de Retornos Mensais
+                            st.header("📅 Performance Mensal do Portfólio")
+                            
                             try:
                                 # Criar tabela de retornos mensais
                                 dates = getattr(optimizer, 'dates', None)
@@ -1437,8 +1090,8 @@ if df is not None:
                                     except:
                                         return 'color: black'
                                 
-                                # 1. TABELA DO PORTFÓLIO
-                                st.subheader("📊 Retornos Mensais do Portfólio Otimizado")
+                                # Mostrar tabela principal
+                                st.subheader("📊 Retornos Mensais do Portfólio")
                                 monthly_display = monthly_table.copy()
                                 
                                 # Aplicar formatação de porcentagem
@@ -1457,83 +1110,9 @@ if df is not None:
                                     height=300
                                 )
                                 
-                                # 2. TABELA DA TAXA DE REFERÊNCIA (se disponível)
+                                # Se temos tabela de excesso, mostrar também
                                 if excess_table is not None:
-                                    # Recalcular a tabela da taxa de referência
-                                    # (Precisa refazer porque a função só retorna monthly_table e excess_table)
-                                    
-                                    # Calcular novamente para obter rf_pivot
-                                    if risk_free_returns is not None:
-                                        # Mesmo processo da função create_monthly_returns_table
-                                        risk_free_cumulative = np.cumsum(risk_free_returns.values)
-                                        risk_free_patrimonio = 1 + risk_free_cumulative
-                                        
-                                        if dates is not None:
-                                            risk_free_df = pd.DataFrame({
-                                                'patrimonio': risk_free_patrimonio
-                                            }, index=dates)
-                                        else:
-                                            start_date = pd.Timestamp('2020-01-01')
-                                            sim_dates = pd.date_range(start=start_date, periods=len(risk_free_patrimonio), freq='D')
-                                            risk_free_df = pd.DataFrame({
-                                                'patrimonio': risk_free_patrimonio
-                                            }, index=sim_dates)
-                                        
-                                        monthly_rf_patrimonio = risk_free_df['patrimonio'].resample('M').last()
-                                        monthly_risk_free = monthly_rf_patrimonio.pct_change().fillna(monthly_rf_patrimonio.iloc[0] - 1)
-                                        
-                                        # Criar tabela pivotada para taxa livre
-                                        rf_monthly_df = pd.DataFrame({
-                                            'Year': monthly_risk_free.index.year,
-                                            'Month': monthly_risk_free.index.month,
-                                            'Return': monthly_risk_free.values
-                                        })
-                                        
-                                        rf_pivot = rf_monthly_df.pivot(index='Year', columns='Month', values='Return')
-                                        
-                                        # Renomear colunas
-                                        month_names = {
-                                            1: 'Jan', 2: 'Fev', 3: 'Mar', 4: 'Abr', 5: 'Mai', 6: 'Jun',
-                                            7: 'Jul', 8: 'Ago', 9: 'Set', 10: 'Out', 11: 'Nov', 12: 'Dez'
-                                        }
-                                        rf_pivot.columns = [month_names.get(col, f'M{col}') for col in rf_pivot.columns]
-                                        
-                                        # Calcular total anual da taxa livre
-                                        rf_yearly = []
-                                        for year in rf_pivot.index:
-                                            year_data = rf_pivot.loc[year].dropna()
-                                            if len(year_data) > 0:
-                                                annual_return = (1 + year_data).prod() - 1
-                                                rf_yearly.append(annual_return)
-                                            else:
-                                                rf_yearly.append(np.nan)
-                                        
-                                        rf_pivot['Total Anual'] = rf_yearly
-                                        
-                                        # Exibir tabela da taxa de referência
-                                        st.subheader("🏛️ Retornos Mensais da Taxa de Referência")
-                                        
-                                        rf_display = rf_pivot.copy()
-                                        
-                                        # Aplicar formatação
-                                        for col in rf_display.columns:
-                                            rf_display[col] = rf_display[col].apply(
-                                                lambda x: f"{x:.2%}" if pd.notna(x) else "-"
-                                            )
-                                        
-                                        # Aplicar estilo
-                                        styled_rf = rf_display.style.applymap(color_negative_red)
-                                        
-                                        # Exibir
-                                        st.dataframe(
-                                            styled_rf,
-                                            use_container_width=True,
-                                            height=300
-                                        )
-                                
-                                # 3. TABELA DE EXCESSO (se disponível)
-                                if excess_table is not None:
-                                    st.subheader("📈 Excesso de Retorno Mensal (Portfólio - Taxa de Referência)")
+                                    st.subheader("📊 Excesso de Retorno Mensal (Portfólio - Taxa de Referência)")
                                     
                                     excess_display = excess_table.copy()
                                     
@@ -1553,17 +1132,8 @@ if df is not None:
                                         height=300
                                     )
                                 
-                                # Explicação das tabelas
-                                st.info(
-                                    "💡 **Como interpretar:**\n"
-                                    "• **Verde**: Retorno positivo no mês\n"
-                                    "• **Vermelho**: Retorno negativo no mês\n"
-                                    "• **Total Anual**: Performance acumulada do ano\n"
-                                    "• **Excesso**: Quanto o portfólio superou (ou ficou abaixo) da taxa de referência"
-                                )
-                                
                             except Exception as e:
-                                st.warning(f"⚠️ Não foi possível gerar as tabelas mensais: {str(e)}")
+                                st.warning(f"⚠️ Não foi possível gerar a tabela mensal: {str(e)}")
                                 st.info("💡 Isso pode acontecer se os dados não tiverem informações de data ou forem insuficientes.")
                             
                          
@@ -1625,4 +1195,3 @@ else:
 # Rodapé
 st.markdown("---")
 st.markdown("*Desenvolvido com Streamlit - Otimização Portfólio v2.0* 🚀")
-
