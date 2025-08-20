@@ -7,6 +7,38 @@ from optimizer import PortfolioOptimizer
 import yfinance as yf
 from datetime import datetime, timedelta
 from scipy import stats
+import time
+global_start = time.time()
+st.write(f"🚀 INÍCIO DO SCRIPT: {global_start}")
+
+# Verificar se hÃ¡ dados brutos carregados
+dados_brutos = st.session_state.get('dados_brutos', None)
+
+def get_ranking_cache_key(data_inicio, data_fim, peso_inc, peso_desv, peso_cor):
+    """
+    Cria chave única para cache do ranking baseada nos parâmetros que afetam o cálculo
+    """
+    return f"ranking_{data_inicio}_{data_fim}_{peso_inc:.3f}_{peso_desv:.3f}_{peso_cor:.3f}"
+
+def should_recalculate_ranking(cache_key):
+    """
+    Verifica se precisa recalcular o ranking ou pode usar cache
+    """
+    current_cache_key = st.session_state.get('ranking_cache_key', '')
+    return cache_key != current_cache_key
+
+def save_ranking_to_cache(ranking_result, cache_key):
+    """
+    Salva ranking no cache com a chave
+    """
+    st.session_state['ranking_result_cached'] = ranking_result
+    st.session_state['ranking_cache_key'] = cache_key
+
+def get_ranking_from_cache():
+    """
+    Recupera ranking do cache
+    """
+    return st.session_state.get('ranking_result_cached', None)
 
 # =============================================================================
 # FUNÇÕES PARA RANKING DE ATIVOS (NOVO!)
@@ -1079,6 +1111,8 @@ with st.sidebar:
 dados_brutos = st.session_state.get('dados_brutos', None)
 
 if dados_brutos is not None:
+    st.write(f"⏱️ Até carregar dados_brutos: {time.time() - global_start:.2f}s")
+
     # Mostrar origem dos dados
     fonte = st.session_state.get('fonte_dados', 'Desconhecida')
     periodo_disp = st.session_state.get('periodo_disponivel', None)
@@ -1288,9 +1322,36 @@ if dados_brutos is not None:
         ranking_result = None
         
         if use_ranking:
-            with st.spinner("🧮 Calculando ranking dos ativos..."):
-                # Calcular ranking baseado nos dados de otimização
-                ranking_result = calculate_asset_ranking(df)
+            # Pegar valores atuais dos períodos
+            periodo_otim = st.session_state.get('periodo_otimizacao', {})
+            data_inicio_cache = periodo_otim.get('inicio', '')
+            data_fim_cache = periodo_otim.get('fim', '')
+            
+            # Pegar pesos atuais
+            p_inc = st.session_state.get('peso_inclinacao', 0.33)
+            p_desv = st.session_state.get('peso_desvio', 0.33) 
+            p_cor = st.session_state.get('peso_correlacao', 0.33)
+            
+            # Criar chave do cache
+            cache_key = get_ranking_cache_key(data_inicio_cache, data_fim_cache, p_inc, p_desv, p_cor)
+            
+            # Verificar se precisa recalcular
+            if should_recalculate_ranking(cache_key):
+                with st.spinner("🧮 Calculando ranking dos ativos..."):
+                    # Calcular ranking baseado nos dados de otimização
+                    ranking_result = calculate_asset_ranking(df)
+                    
+                    if ranking_result is not None:
+                        # Salvar no cache
+                        save_ranking_to_cache(ranking_result, cache_key)
+                        st.success("✅ Ranking calculado e salvo no cache!")
+                    else:
+                        st.error("❌ Erro ao calcular ranking")
+                        ranking_result = None
+            else:
+                # Usar cache
+                ranking_result = get_ranking_from_cache()
+                st.info("⚡ Ranking carregado do cache (sem recálculo)")
                 
                 if ranking_result is not None:
                     # Exibir resultados
@@ -1453,7 +1514,7 @@ if dados_brutos is not None:
                 has_risk_free = True
                 risk_free_column_name = df.columns[1]
                 st.info(f"📊 Taxa de referência detectada: '{risk_free_column_name}'")
-        
+ 
         # SEÇÃO DE OTIMIZAÇÃO
         st.header("🛒 Seleção de Ativos")
         
@@ -1465,7 +1526,7 @@ if dados_brutos is not None:
                 asset_columns = df.columns[1:].tolist()
         else:
             asset_columns = df.columns.tolist()
-        
+
         # Verificar se há seleção automática ativa
         auto_selection_active = st.session_state.get('auto_selection_active', False)
         selected_assets_auto = st.session_state.get('selected_assets_auto', [])
