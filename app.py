@@ -1793,6 +1793,9 @@ if dados_brutos is not None:
                                 
                                 # Métricas do período de otimização
                                 metrics = result['metrics']
+                                ref_anualiz = (1 + metrics['risk_free_rate']) ** (365 / dias_otim) - 1
+                                sharpe_corrigido = (metrics['annual_return'] - ref_anualiz) / metrics['volatility'] if metrics['volatility'] > 0 else 0
+                                sortino_corrigido = (metrics['annual_return'] - ref_anualiz) / metrics['downside_deviation'] if metrics['downside_deviation'] > 0 else 0
                                 
                                 # Primeira linha de métricas
                                 col1, col2, col3, col4, col5 = st.columns(5)
@@ -1821,14 +1824,14 @@ if dados_brutos is not None:
                                 with col4:
                                     st.metric(
                                         "⚡ Sharpe Ratio", 
-                                        f"{metrics['sharpe_ratio']:.3f}",
+                                        f"{sharpe_corrigido:.3f}",
                                         help=f"(Retorno Total - Taxa de referência) / Volatilidade\nTaxa de referência usada: {metrics['risk_free_rate']:.2%}"
                                     )
                                 
                                 with col5:
                                     st.metric(
                                         "🔥 Sortino Ratio", 
-                                        f"{metrics['sortino_ratio']:.3f}",
+                                        f"{sortino_corrigido:.3f}",
                                         help="Similar ao Sharpe, mas considera apenas volatilidade negativa"
                                     )
                                 
