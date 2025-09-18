@@ -7,6 +7,111 @@ from optimizer import PortfolioOptimizer
 import yfinance as yf
 from datetime import datetime, timedelta
 from scipy import stats
+import requests
+import importlib.util
+import sys
+import os
+import tempfile
+
+@st.cache_data(ttl=3600)  # Cache por 1 hora
+def load_optimizer_from_private_repo():
+    """
+    Carrega optimizer.py do repositório privado
+    """
+    try:
+        # Configurações do repositório privado
+        GITHUB_USER = "psrs2000"  # Seu usuário
+        PRIVATE_REPO = "Portfolio_Optimizer_PVT"  # Nome do repo privado
+        GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")  # Token do GitHub
+        
+        if not GITHUB_TOKEN:
+            st.error("❌ Token do GitHub não configurado!")
+            st.info("Configure GITHUB_TOKEN nas secrets do Streamlit")
+            return None
+        
+        # URL da API do GitHub para buscar o arquivo
+        url = f"https://api.github.com/repos/{GITHUB_USER}/{PRIVATE_REPO}/contents/optimizer.py"
+        
+        # Headers com autenticação
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3.raw"
+        }
+        
+        # Fazer requisição
+        with st.spinner("🔄 Carregando optimizer do repositório privado..."):
+            response = requests.get(url, headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            # Código baixado com sucesso
+            optimizer_code = response.text
+            
+            # Criar arquivo temporário
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_file:
+                temp_file.write(optimizer_code)
+                temp_path = temp_file.name
+            
+            # Importar dinamicamente
+            spec = importlib.util.spec_from_file_location("optimizer", temp_path)
+            optimizer_module = importlib.util.module_from_spec(spec)
+            sys.modules["optimizer"] = optimizer_module
+            spec.loader.exec_module(optimizer_module)
+            
+            # Limpar arquivo temporário
+            os.unlink(temp_path)
+            
+            st.success("✅ Optimizer carregado do repositório privado!")
+            return optimizer_module.PortfolioOptimizer
+            
+        elif response.status_code == 404:
+            st.error("❌ Arquivo optimizer.py não encontrado no repositório privado")
+            st.info("Verifique se o arquivo existe em Portfolio_Optimizer_PVT/optimizer.py")
+            return None
+            
+        elif response.status_code == 401:
+            st.error("❌ Token do GitHub inválido ou sem permissão")
+            st.info("Verifique se o token tem acesso ao repositório privado")
+            return None
+            
+        else:
+            st.error(f"❌ Erro ao acessar repositório: {response.status_code}")
+            st.info(f"Mensagem: {response.text}")
+            return None
+            
+    except requests.exceptions.Timeout:
+        st.error("❌ Timeout ao carregar optimizer (>30s)")
+        return None
+        
+    except requests.exceptions.ConnectionError:
+        st.error("❌ Erro de conexão com GitHub")
+        return None
+        
+    except Exception as e:
+        st.error(f"❌ Erro inesperado: {str(e)}")
+        return None
+
+# Tentar carregar o optimizer
+PortfolioOptimizer = load_optimizer_from_private_repo()
+
+# Se falhou, parar a execução
+if PortfolioOptimizer is None:
+    st.markdown("---")
+    st.markdown("### 🔧 Configuração necessária:")
+    st.markdown("""
+    1. **Criar Personal Access Token no GitHub:**
+       - Vá em: Settings > Developer settings > Personal access tokens
+       - Clique em "Generate new token (classic)"
+       - Marque: `repo` (acesso completo aos repositórios)
+       
+    2. **Configurar token no Streamlit:**
+       - No Streamlit Cloud: Settings > Secrets
+       - Adicionar linha: `GITHUB_TOKEN = "seu_token_aqui"`
+       
+    3. **Verificar repositório privado:**
+       - Nome: `Portfolio_Optimizer_PVT`
+       - Arquivo: `optimizer.py` na raiz
+    """)
+    st.stop()
 
 # =============================================================================
 # FUNÇÕES PARA RANKING DE ATIVOS (NOVO!)
@@ -471,7 +576,7 @@ def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_re
     # ========== NOVA METODOLOGIA: BASE 0 MENSAL ==========
     
     # 1. Agrupar por mês e pegar o ÚLTIMO valor de cada mês
-    monthly_cumulative = portfolio_df['cumulative'].resample('M').last()
+    monthly_cumulative = portfolio_df['cumulative'].resample('ME').last()
     
     # 2. Calcular retornos mensais em PERCENTUAIS
     monthly_returns = []
@@ -508,7 +613,7 @@ def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_re
             }, index=dates)
         
         # Agrupar por mês
-        monthly_rf_cumulative = risk_free_df['cumulative'].resample('M').last()
+        monthly_rf_cumulative = risk_free_df['cumulative'].resample('ME').last()
         
         # Calcular retornos mensais da taxa livre (base 0)
         monthly_rf_returns = []
@@ -1535,7 +1640,7 @@ if dados_brutos is not None:
                                 f"{asset}",
                                 min_value=-100,
                                 max_value=0,
-                                value=-10,
+                                value=-100,
                                 step=1,
                                 help=f"Peso negativo para {asset} (%). -100% = venda total do ativo"
                             )
