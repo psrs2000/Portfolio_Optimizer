@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from optimizer import PortfolioOptimizer
 import yfinance as yf
 from datetime import datetime, timedelta
 from scipy import stats
