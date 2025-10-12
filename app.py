@@ -228,24 +228,23 @@ def calculate_asset_ranking(df_base_zero, risk_free_column=None):
                 std_dev_norm = std_dev / max_deviation if max_deviation > 0 else 0
                 
                 # NOVA FÓRMULA COM PESOS PERSONALIZÁVEIS
-                if slope > 0:  # Só eliminar se inclinação for negativa
-                    # Garantir que correlação está entre 0 e 1 (valor absoluto)
-                    correlation_norm = abs(correlation)
-                    
-                    # Pegar pesos do session_state (ou usar padrões)
-                    p_inc = st.session_state.get('peso_inclinacao', 0.33)
-                    p_desv = st.session_state.get('peso_desvio', 0.33)
-                    p_cor = st.session_state.get('peso_correlacao', 0.33)
-                    
-                    # Nova fórmula: [P_inc×Inclinação + P_desv×(1-Desvio) + P_cor×Correlação] / (P_inc+P_desv+P_cor)
-                    numerador = (p_inc * slope_norm + 
-                               p_desv * (1 - std_dev_norm) + 
-                               p_cor * correlation_norm)
-                    denominador = p_inc + p_desv + p_cor
-                    
-                    indice = numerador / denominador if denominador > 0 else 0
-                else:
-                    indice = 0  # Inclinação negativa = 0
+
+                # Usar correlação com sinal (permite negativas para hedge)
+                correlation_norm = correlation
+                
+                # Pegar pesos do session_state (ou usar padrões)
+                p_inc = st.session_state.get('peso_inclinacao', 0.33)
+                p_desv = st.session_state.get('peso_desvio', 0.33)
+                p_cor = st.session_state.get('peso_correlacao', 0.33)
+                
+                # Nova fórmula: [P_inc×Inclinação + P_desv×(1-Desvio) + P_cor×Correlação] / (P_inc+P_desv+P_cor)
+                numerador = (p_inc * slope_norm + 
+                           p_desv * (1 - std_dev_norm) + 
+                           p_cor * correlation_norm)
+                denominador = p_inc + p_desv + p_cor
+                
+                indice = numerador / denominador if denominador > 0 else 0
+
                 
                 rankings.append({
                     'Ativo': asset,
