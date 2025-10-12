@@ -124,7 +124,9 @@ def calculate_asset_ranking(df_base_zero, risk_free_column=None):
     3. Desvio Padrão (Diferença)
     4. Correlação (Integral vs Data)
     
-    Fórmula: Índice = (Inclinacao_norm × Correlação) / [(1 - R²) × Desvio_norm]
+    Fórmula: Índice = (Inclinacao_norm × P_inc + (1-Desvio_norm) × P_desv + Correlação × P_cor) / (P_inc + P_desv + P_cor)
+    
+    ATUALIZAÇÃO v2.0: Normalização final do índice para garantir range 0-1
     """
     try:
         # Identificar colunas
@@ -178,13 +180,13 @@ def calculate_asset_ranking(df_base_zero, risk_free_column=None):
         df_integral = pd.DataFrame(integral_data)
         
         # ===============================
-        # PASSO 3: CALCULAR 4 PARÂMETROS
+        # PASSO 3: CALCULAR 4 PARÂMETROS (SEM NORMALIZAÇÃO AINDA)
         # ===============================
         rankings = []
         all_slopes = []
         all_deviations = []
         
-        # Primeira passada: coletar todas as inclinações e desvios para normalização
+        # Primeira passada: coletar todas as inclinações e desvios
         for asset in asset_columns:
             try:
                 # Dados para regressão (x = índice numérico das datas, y = integral)
@@ -197,7 +199,7 @@ def calculate_asset_ranking(df_base_zero, risk_free_column=None):
                 # Desvio padrão das diferenças
                 std_dev = df_diferenca[f"{asset}_diff"].std()
                 
-                all_slopes.append(slope)  # Valor absoluto para normalização
+                all_slopes.append(slope)
                 all_deviations.append(std_dev)
                 
             except Exception as e:
@@ -208,7 +210,9 @@ def calculate_asset_ranking(df_base_zero, risk_free_column=None):
         max_slope = max(all_slopes) if all_slopes else 1
         max_deviation = max(all_deviations) if all_deviations else 1
         
-        # Segunda passada: calcular índices com normalização
+        # ===============================
+        # PASSO 4: CALCULAR ÍNDICE BRUTO (COM NORMALIZAÇÃO DE COMPONENTES)
+        # ===============================
         for asset in asset_columns:
             try:
                 # Dados para regressão
@@ -218,32 +222,27 @@ def calculate_asset_ranking(df_base_zero, risk_free_column=None):
                 # Calcular regressão linear
                 slope, intercept, r_value, p_value, std_err = stats.linregress(x_data, y_data)
                 r_squared = r_value ** 2
-                correlation = r_value
+                correlation = r_value  # ← SEM abs(), permite correlações negativas!
                 
                 # Desvio padrão das diferenças
                 std_dev = df_diferenca[f"{asset}_diff"].std()
                 
-                # NORMALIZAÇÃO
+                # NORMALIZAÇÃO DOS COMPONENTES
                 slope_norm = slope / max_slope if max_slope > 0 else 0
                 std_dev_norm = std_dev / max_deviation if max_deviation > 0 else 0
-                
-                # NOVA FÓRMULA COM PESOS PERSONALIZÁVEIS
-                # Usar correlação com sinal (permite negativas para hedge)
-                correlation_norm = correlation
                 
                 # Pegar pesos do session_state (ou usar padrões)
                 p_inc = st.session_state.get('peso_inclinacao', 0.33)
                 p_desv = st.session_state.get('peso_desvio', 0.33)
                 p_cor = st.session_state.get('peso_correlacao', 0.33)
                 
-                # Nova fórmula: [P_inc×Inclinação + P_desv×(1-Desvio) + P_cor×Correlação] / (P_inc+P_desv+P_cor)
+                # NOVA FÓRMULA: Soma ponderada (sem IF de slope > 0)
                 numerador = (p_inc * slope_norm + 
                            p_desv * (1 - std_dev_norm) + 
-                           p_cor * correlation_norm)
+                           p_cor * correlation)
                 denominador = p_inc + p_desv + p_cor
                 
-                indice = numerador / denominador if denominador > 0 else 0
-
+                indice_bruto = numerador / denominador if denominador > 0 else 0
                 
                 rankings.append({
                     'Ativo': asset,
@@ -253,7 +252,7 @@ def calculate_asset_ranking(df_base_zero, risk_free_column=None):
                     'Correlação': correlation,
                     'Desvio_Padrão': std_dev,
                     'Desvio_Norm': std_dev_norm,
-                    'Índice': indice
+                    'Índice_Bruto': indice_bruto  # ← Guardar índice antes da normalização final
                 })
                 
             except Exception as e:
@@ -266,13 +265,38 @@ def calculate_asset_ranking(df_base_zero, risk_free_column=None):
                     'Correlação': 0,
                     'Desvio_Padrão': 0,
                     'Desvio_Norm': 0,
-                    'Índice': 0
+                    'Índice_Bruto': 0
                 })
         
-        # Criar DataFrame e ordenar por índice
+        # ===============================
+        # PASSO 5: NORMALIZAÇÃO FINAL DO ÍNDICE (0 a 1)
+        # ===============================
         df_ranking = pd.DataFrame(rankings)
+        
+        if len(df_ranking) > 0:
+            max_idx = df_ranking['Índice_Bruto'].max()
+            min_idx = df_ranking['Índice_Bruto'].min()
+            
+            # Normalizar para range 0-1
+            if max_idx > min_idx:
+                df_ranking['Índice'] = (df_ranking['Índice_Bruto'] - min_idx) / (max_idx - min_idx)
+            else:
+                # Se todos os índices são iguais
+                df_ranking['Índice'] = 0.5
+            
+            # Remover coluna temporária
+            df_ranking = df_ranking.drop(columns=['Índice_Bruto'])
+        else:
+            df_ranking['Índice'] = 0
+        
+        # Ordenar por índice normalizado
         df_ranking = df_ranking.sort_values('Índice', ascending=False).reset_index(drop=True)
         df_ranking['Posição'] = range(1, len(df_ranking) + 1)
+        
+        # Reorganizar colunas
+        cols = ['Posição', 'Ativo', 'Índice', 'Inclinação', 'Inclinação_Norm', 
+                'R²', 'Correlação', 'Desvio_Padrão', 'Desvio_Norm']
+        df_ranking = df_ranking[cols]
         
         return {
             'ranking': df_ranking,
