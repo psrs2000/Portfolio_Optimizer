@@ -228,7 +228,6 @@ def calculate_asset_ranking(df_base_zero, risk_free_column=None):
                 std_dev_norm = std_dev / max_deviation if max_deviation > 0 else 0
                 
                 # NOVA FÓRMULA COM PESOS PERSONALIZÁVEIS
-
                 # Usar correlação com sinal (permite negativas para hedge)
                 correlation_norm = correlation
                 
