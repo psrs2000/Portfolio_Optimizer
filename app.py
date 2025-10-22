@@ -118,15 +118,14 @@ if PortfolioOptimizer is None:
 
 def calculate_asset_ranking(df_base_zero, risk_free_column=None):
     """
-    Calcula ranking de ativos baseado em 4 parâmetros:
-    1. R² (Integral vs Data)
-    2. Inclinação (Integral vs Data) 
-    3. Desvio Padrão (Diferença)
-    4. Correlação (Integral vs Data)
+    Calcula ranking de ativos baseado em 3 parâmetros:
+    1. Inclinação (Integral vs Data) → PERFORMANCE
+    2. Desvio Padrão (Diferença) → RISCO/VOLATILIDADE
+    3. Correlação (Ativo vs Referência) → CONSISTÊNCIA
     
     Fórmula: Índice = (Inclinacao_norm × P_inc + (1-Desvio_norm) × P_desv + Correlação × P_cor) / (P_inc + P_desv + P_cor)
     
-    ATUALIZAÇÃO v2.0: Normalização final do índice para garantir range 0-1
+    ATUALIZAÇÃO v2.1: Correlação agora é direta entre Ativo e Referência
     """
     try:
         # Identificar colunas
@@ -180,7 +179,7 @@ def calculate_asset_ranking(df_base_zero, risk_free_column=None):
         df_integral = pd.DataFrame(integral_data)
         
         # ===============================
-        # PASSO 3: CALCULAR 4 PARÂMETROS (SEM NORMALIZAÇÃO AINDA)
+        # PASSO 3: CALCULAR 3 PARÂMETROS (SEM NORMALIZAÇÃO AINDA)
         # ===============================
         rankings = []
         all_slopes = []
@@ -215,14 +214,21 @@ def calculate_asset_ranking(df_base_zero, risk_free_column=None):
         # ===============================
         for asset in asset_columns:
             try:
-                # Dados para regressão
+                # Dados para regressão (Inclinação)
                 x_data = np.arange(len(df_integral))
                 y_data = df_integral[f"{asset}_integral"].values
                 
                 # Calcular regressão linear
                 slope, intercept, r_value, p_value, std_err = stats.linregress(x_data, y_data)
                 r_squared = r_value ** 2
-                correlation = r_value  # ← SEM abs(), permite correlações negativas!
+                
+                # ✅ CORRELAÇÃO: Entre as integrais (evoluções acumuladas)
+                # Integral do ativo PURO (não da diferença!)
+                asset_integral = df_work[asset].cumsum().values
+                # Integral da referência (soma acumulada)
+                ref_integral = df_work[ref_col].cumsum().values
+                # Correlação entre as duas curvas acumuladas
+                correlation_direct = np.corrcoef(asset_integral, ref_integral)[0, 1]
                 
                 # Desvio padrão das diferenças
                 std_dev = df_diferenca[f"{asset}_diff"].std()
@@ -236,10 +242,10 @@ def calculate_asset_ranking(df_base_zero, risk_free_column=None):
                 p_desv = st.session_state.get('peso_desvio', 0.33)
                 p_cor = st.session_state.get('peso_correlacao', 0.33)
                 
-                # NOVA FÓRMULA: Soma ponderada (sem IF de slope > 0)
+                # FÓRMULA: Soma ponderada
                 numerador = (p_inc * slope_norm + 
                            p_desv * (1 - std_dev_norm) + 
-                           p_cor * correlation)
+                           p_cor * correlation_direct)  # ✅ Usando correlação direta
                 denominador = p_inc + p_desv + p_cor
                 
                 indice_bruto = numerador / denominador if denominador > 0 else 0
@@ -249,10 +255,10 @@ def calculate_asset_ranking(df_base_zero, risk_free_column=None):
                     'Inclinação': slope,
                     'Inclinação_Norm': slope_norm,
                     'R²': r_squared,
-                    'Correlação': correlation,
+                    'Correlação': correlation_direct,  # ✅ Correlação direta agora
                     'Desvio_Padrão': std_dev,
                     'Desvio_Norm': std_dev_norm,
-                    'Índice_Bruto': indice_bruto  # ← Guardar índice antes da normalização final
+                    'Índice_Bruto': indice_bruto
                 })
                 
             except Exception as e:
