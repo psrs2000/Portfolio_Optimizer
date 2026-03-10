@@ -3,114 +3,10 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+from optimizer import PortfolioOptimizer
 import yfinance as yf
 from datetime import datetime, timedelta
 from scipy import stats
-import requests
-import importlib.util
-import sys
-import os
-import tempfile
-
-@st.cache_data(ttl=3600)  # Cache por 1 hora
-def load_optimizer_from_private_repo():
-    """
-    Carrega optimizer.py do repositório privado
-    """
-    try:
-        # Configurações do repositório privado
-        GITHUB_USER = "psrs2000"  # Seu usuário
-        PRIVATE_REPO = "Portfolio_Optimizer_PVT"  # Nome do repo privado
-        GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")  # Token do GitHub
-        
-        if not GITHUB_TOKEN:
-            st.error("❌ Token do GitHub não configurado!")
-            st.info("Configure GITHUB_TOKEN nas secrets do Streamlit")
-            return None
-        
-        # URL da API do GitHub para buscar o arquivo
-        url = f"https://api.github.com/repos/{GITHUB_USER}/{PRIVATE_REPO}/contents/optimizer.py"
-        
-        # Headers com autenticação
-        headers = {
-            "Authorization": f"token {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github.v3.raw"
-        }
-        
-        # Fazer requisição
-        with st.spinner("🔄 Carregando optimizer do repositório privado..."):
-            response = requests.get(url, headers=headers, timeout=30)
-        
-        if response.status_code == 200:
-            # Código baixado com sucesso
-            optimizer_code = response.text
-            
-            # Criar arquivo temporário
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_file:
-                temp_file.write(optimizer_code)
-                temp_path = temp_file.name
-            
-            # Importar dinamicamente
-            spec = importlib.util.spec_from_file_location("optimizer", temp_path)
-            optimizer_module = importlib.util.module_from_spec(spec)
-            sys.modules["optimizer"] = optimizer_module
-            spec.loader.exec_module(optimizer_module)
-            
-            # Limpar arquivo temporário
-            os.unlink(temp_path)
-            
-            st.success("✅ Optimizer carregado do repositório privado!")
-            return optimizer_module.PortfolioOptimizer
-            
-        elif response.status_code == 404:
-            st.error("❌ Arquivo optimizer.py não encontrado no repositório privado")
-            st.info("Verifique se o arquivo existe em Portfolio_Optimizer_PVT/optimizer.py")
-            return None
-            
-        elif response.status_code == 401:
-            st.error("❌ Token do GitHub inválido ou sem permissão")
-            st.info("Verifique se o token tem acesso ao repositório privado")
-            return None
-            
-        else:
-            st.error(f"❌ Erro ao acessar repositório: {response.status_code}")
-            st.info(f"Mensagem: {response.text}")
-            return None
-            
-    except requests.exceptions.Timeout:
-        st.error("❌ Timeout ao carregar optimizer (>30s)")
-        return None
-        
-    except requests.exceptions.ConnectionError:
-        st.error("❌ Erro de conexão com GitHub")
-        return None
-        
-    except Exception as e:
-        st.error(f"❌ Erro inesperado: {str(e)}")
-        return None
-
-# Tentar carregar o optimizer
-PortfolioOptimizer = load_optimizer_from_private_repo()
-
-# Se falhou, parar a execução
-if PortfolioOptimizer is None:
-    st.markdown("---")
-    st.markdown("### 🔧 Configuração necessária:")
-    st.markdown("""
-    1. **Criar Personal Access Token no GitHub:**
-       - Vá em: Settings > Developer settings > Personal access tokens
-       - Clique em "Generate new token (classic)"
-       - Marque: `repo` (acesso completo aos repositórios)
-       
-    2. **Configurar token no Streamlit:**
-       - No Streamlit Cloud: Settings > Secrets
-       - Adicionar linha: `GITHUB_TOKEN = "seu_token_aqui"`
-       
-    3. **Verificar repositório privado:**
-       - Nome: `Portfolio_Optimizer_PVT`
-       - Arquivo: `optimizer.py` na raiz
-    """)
-    st.stop()
 
 # =============================================================================
 # FUNÇÕES PARA RANKING DE ATIVOS (NOVO!)
@@ -1326,16 +1222,22 @@ if dados_brutos is not None:
         
         # Slider para Fim da Análise (validação)
         usar_validacao = st.checkbox("Usar validação (forward test)?", value=True)
-        
+
         if usar_validacao:
-            data_fim_analise = st.slider(
-                "📊 Selecione o **Fim da Análise (Validação)**",
-                min_value=data_fim_otim,
-                max_value=default_fim_analise,
-                value=default_fim_analise,
-                format="DD/MM/YYYY",
-                help="Define até onde você deseja validar os resultados"
-            )
+            # Verificar se há período disponível para validação
+            if data_fim_otim >= default_fim_analise:
+                st.warning("⚠️ Não há período disponível para validação. O fim da otimização já está na última data disponível.")
+                st.info("💡 Dica: Mova o slider 'Fim da Otimização' para a esquerda para liberar período para validação, ou desmarque a opção 'Usar validação'.")
+                data_fim_analise = None
+            else:
+                data_fim_analise = st.slider(
+                    "📊 Selecione o **Fim da Análise (Validação)**",
+                    min_value=data_fim_otim,
+                    max_value=default_fim_analise,
+                    value=default_fim_analise,
+                    format="DD/MM/YYYY",
+                    help="Define até onde você deseja validar os resultados"
+                )
         else:
             data_fim_analise = None
         
@@ -2713,6 +2615,764 @@ if dados_brutos is not None:
                         st.error(f"❌ Erro durante a otimização: {str(e)}")
                         st.info("💡 Verifique se os dados estão no formato correto")
 
+# =============================================================================
+# FUNÇÕES DE AUTO-OTIMIZAÇÃO (WALK-FORWARD)
+# =============================================================================
+
+def run_walk_forward_test_streamlit(df_trabalho, config, risk_free_column_name):
+    """
+    Executar teste walk-forward para Streamlit - VERSÃO COM TAXA REF ACUMULADA
+    """
+    try:
+        # Verificações iniciais
+        if df_trabalho is None or len(df_trabalho) == 0:
+            raise ValueError("DataFrame vazio ou None")
+
+        # Converter períodos para dias corridos de calendário
+        period_to_days = {
+            '3m': 90, '6m': 180, '1a': 365, '2a': 730, '3a': 1095,
+            '1sem': 7, '2sem': 14, '1mes': 30, '2mes': 60, '3mes': 90
+        }
+
+        otim_days = period_to_days[config['otim_period']]
+        rebal_days = period_to_days[config['rebal_period']]
+
+        # Verificar coluna de data
+        if 'Data' not in df_trabalho.columns:
+            raise ValueError("Coluna 'Data' não encontrada no DataFrame")
+
+        # Extrair datas inicial e final
+        data_inicial = pd.to_datetime(df_trabalho['Data'].iloc[0])
+        data_final = pd.to_datetime(df_trabalho['Data'].iloc[-1])
+        total_calendar_days = (data_final - data_inicial).days + 1
+
+        # Verificar se temos dados suficientes
+        min_required_days = otim_days + rebal_days * 2
+        if total_calendar_days < min_required_days:
+            raise ValueError(f"Período insuficiente: {total_calendar_days} < {min_required_days} dias")
+
+        # Calcular steps baseado em dias corridos
+        max_possible_steps = (total_calendar_days - otim_days) // rebal_days
+        max_steps = max_possible_steps  # USA TODOS OS STEPS
+
+        # Proteção apenas para casos extremos
+        if max_steps > 1000000:
+            max_steps = 1000000
+
+        if max_steps < 1:
+            raise ValueError(f"Steps insuficientes: {max_steps}")
+
+        # ========== INICIALIZAR VARIÁVEIS DE ACUMULAÇÃO ==========
+        ret_acumulado_config = 1.0  # Para retorno
+        taxa_ref_acumulada_config = 1.0  # Para taxa de referência
+        primeira_data_validacao = None
+        ultima_data_validacao = None
+        step_metrics_individuais = []
+        volatilidades = []  # Para calcular média das volatilidades
+        step_errors = []  # Rastrear erros dos steps para debug
+
+        # Loop pelos steps
+        for step_num in range(1, max_steps + 1):
+            try:
+                # Calcular datas baseado em dias corridos
+                inicio_otim_days = (step_num - 1) * rebal_days
+                fim_otim_days = inicio_otim_days + otim_days
+                fim_valid_days = fim_otim_days + rebal_days
+
+                # Converter para datas reais
+                data_inicio_otim = data_inicial + pd.Timedelta(days=inicio_otim_days)
+                data_fim_otim = data_inicial + pd.Timedelta(days=fim_otim_days - 1)
+                data_fim_valid = data_inicial + pd.Timedelta(days=fim_valid_days - 1)
+
+                # Verificar se as datas estão dentro do período disponível
+                if data_fim_valid > data_final:
+                    break
+
+                # ========== PEGAR PERÍODO COMPLETO ==========
+                # Filtrar dados brutos do PERÍODO COMPLETO (otim + valid)
+                df_periodo_completo_bruto = df_trabalho[
+                    (pd.to_datetime(df_trabalho['Data']) >= data_inicio_otim) &
+                    (pd.to_datetime(df_trabalho['Data']) <= data_fim_valid)
+                ].copy().reset_index(drop=True)
+
+                if len(df_periodo_completo_bruto) == 0:
+                    step_errors.append(f"Step {step_num}: Período completo vazio")
+                    continue
+
+                # ========== APLICAR BASE ZERO ÚNICA ==========
+                # Transformar PERÍODO COMPLETO para base zero
+                df_completo_base0, cols_removidas = transformar_base_zero(
+                    df_periodo_completo_bruto.set_index('Data')
+                )
+
+                if df_completo_base0 is None:
+                    step_errors.append(f"Step {step_num}: transformar_base_zero retornou None")
+                    continue
+
+                df_completo_base0 = df_completo_base0.reset_index()
+                df_completo_base0.rename(columns={'index': 'Data'}, inplace=True)
+
+                # ========== SEPARAR PERÍODOS APÓS BASE ZERO ==========
+                # Agora separar os períodos já em base zero
+                df_otim_base0 = df_completo_base0[
+                    (pd.to_datetime(df_completo_base0['Data']) >= data_inicio_otim) &
+                    (pd.to_datetime(df_completo_base0['Data']) <= data_fim_otim)
+                ].copy().reset_index(drop=True)
+
+                df_valid_base0 = df_completo_base0[
+                    (pd.to_datetime(df_completo_base0['Data']) > data_fim_otim) &
+                    (pd.to_datetime(df_completo_base0['Data']) <= data_fim_valid)
+                ].copy().reset_index(drop=True)
+
+                # Verificar se há dados suficientes
+                if len(df_otim_base0) < 10 or len(df_valid_base0) < 2:
+                    step_errors.append(f"Step {step_num}: Dados insuficientes (otim={len(df_otim_base0)}, valid={len(df_valid_base0)})")
+                    continue
+
+                # Executar step com dados em base zero e período completo
+                step_result = execute_single_step_streamlit(
+                    df_otim_base0,
+                    df_valid_base0,
+                    df_completo_base0,
+                    config,
+                    step_num,
+                    risk_free_column_name
+                )
+
+                if step_result:
+                    # ========== ACUMULAR RETORNO ==========
+                    retorno_step = step_result['total_return']
+                    ret_acumulado_config *= (1 + retorno_step)
+
+                    # ========== ACUMULAR TAXA REF ==========
+                    if 'risk_free_period' in step_result:
+                        taxa_ref_step = step_result['risk_free_period']
+                        taxa_ref_acumulada_config *= (1 + taxa_ref_step)
+
+                    # ========== GUARDAR VOLATILIDADE ==========
+                    if 'volatility' in step_result:
+                        volatilidades.append(step_result['volatility'])
+
+                    # ========== GUARDAR DATAS ==========
+                    # Primeira data de validação (só no primeiro step bem-sucedido)
+                    if primeira_data_validacao is None:
+                        primeira_data_validacao = pd.to_datetime(df_valid_base0['Data'].iloc[0])
+
+                    # Sempre atualizar última data
+                    ultima_data_validacao = pd.to_datetime(df_valid_base0['Data'].iloc[-1])
+
+                    # Guardar métricas individuais do step
+                    step_metrics_individuais.append(step_result)
+                else:
+                    step_errors.append(f"Step {step_num}: execute_single_step retornou None")
+
+            except Exception as e:
+                step_errors.append(f"Step {step_num}: {str(e)}")
+                continue
+
+        # ========== CALCULAR MÉTRICAS FINAIS ==========
+        if step_metrics_individuais and len(step_metrics_individuais) >= 1:
+            # Retorno total acumulado
+            retorno_total_config = ret_acumulado_config - 1
+            taxa_ref_total_config = taxa_ref_acumulada_config - 1
+
+            # Calcular dias corridos totais
+            if primeira_data_validacao and ultima_data_validacao:
+                dias_totais = (ultima_data_validacao - primeira_data_validacao).days + 1
+
+                # Anualizar retorno
+                if dias_totais > 0:
+                    retorno_anualizado = (1 + retorno_total_config) ** (365/dias_totais) - 1
+                    taxa_ref_anualizada = (1 + taxa_ref_total_config) ** (365/dias_totais) - 1
+                else:
+                    retorno_anualizado = 0
+                    taxa_ref_anualizada = 0
+            else:
+                retorno_anualizado = retorno_total_config
+                taxa_ref_anualizada = taxa_ref_total_config
+                dias_totais = 0
+
+            # Volatilidade média
+            vol_media = sum(volatilidades) / len(volatilidades) if volatilidades else 0
+
+            # CALCULAR SHARPE FINAL
+            if vol_media > 0:
+                sharpe_final = (retorno_anualizado - taxa_ref_anualizada) / vol_media
+            else:
+                sharpe_final = 0
+
+            # Calcular médias das outras métricas
+            return calculate_average_metrics_streamlit(
+                step_metrics_individuais,
+                config,
+                retorno_anualizado,
+                taxa_ref_anualizada,
+                vol_media,
+                sharpe_final,
+                retorno_total_config,
+                dias_totais
+            )
+
+        else:
+            # Incluir detalhes dos erros dos steps
+            error_summary = f"Nenhum step bem-sucedido. Total de steps tentados: {max_steps}"
+            if step_errors:
+                # Mostrar apenas os primeiros 3 erros únicos
+                unique_errors = list(set(step_errors))[:3]
+                error_details = " | ".join(unique_errors)
+                error_summary += f" | Exemplos de erros: {error_details}"
+            raise ValueError(error_summary)
+
+    except Exception as e:
+        # Re-lançar o erro para debug
+        raise Exception(f"Erro em run_walk_forward_test_streamlit: {str(e)}") from e
+
+def execute_single_step_streamlit(df_otim, df_valid, df_completo, config, step_num, risk_free_column_name):
+    """
+    Step walk-forward - USANDO PERÍODO COMPLETO COM BASE ZERO ÚNICA
+    """
+    try:
+        # 1. RANKING E SELEÇÃO
+        ranking_result = calculate_asset_ranking(
+            df_otim,
+            risk_free_column_name
+        )
+
+        if not ranking_result:
+            raise ValueError(f"calculate_asset_ranking retornou None")
+
+        df_ranking = ranking_result['ranking']
+        score_min = config['rank_min'] / 100
+        score_max = config['rank_max'] / 100
+
+        filtered_ranking = df_ranking[
+            (df_ranking['Índice'] >= score_min) &
+            (df_ranking['Índice'] <= score_max)
+        ]
+
+        if len(filtered_ranking) < 2:
+            total_ativos = len(df_ranking)
+            raise ValueError(f"Poucos ativos após filtro ({len(filtered_ranking)}/{total_ativos}, score {score_min:.0%}-{score_max:.0%})")
+
+        selected_assets = filtered_ranking['Ativo'].tolist()
+
+        # ========================================
+        # OTIMIZAÇÃO (período treino)
+        # ========================================
+
+        # Preparar lista de ativos para otimização
+        if config['use_shorts'] and config['short_asset']:
+            if config['short_asset'] not in df_otim.columns:
+                raise ValueError(f"Ativo short '{config['short_asset']}' não encontrado")
+            all_assets = selected_assets + [config['short_asset']]
+        else:
+            all_assets = selected_assets
+
+        optimizer = PortfolioOptimizer(df_otim, all_assets if config['use_shorts'] else selected_assets)
+
+        # Taxa livre de risco para otimização
+        if hasattr(optimizer, 'risk_free_rate_total'):
+            risk_free_rate = optimizer.risk_free_rate_total
+        else:
+            risk_free_rate = 0.0
+
+        objective_map = {
+            'sharpe': 'sharpe',
+            'volatility': 'volatility',
+            'hc10': 'hc10',
+            'quality_linear': 'quality_linear'
+        }
+
+        # Executar otimização
+        if config['use_shorts'] and config['short_asset']:
+            result = optimizer.optimize_portfolio_with_shorts(
+                selected_assets=selected_assets,
+                short_assets=[config['short_asset']],
+                short_weights={config['short_asset']: config['short_weight']},
+                objective_type=objective_map[config['objective']],
+                max_weight=config['weight_max'],
+                min_weight=config['weight_min'],
+                risk_free_rate=risk_free_rate,
+                individual_constraints=None
+            )
+        else:
+            result = optimizer.optimize_portfolio(
+                objective_type=objective_map[config['objective']],
+                max_weight=config['weight_max'],
+                min_weight=config['weight_min'],
+                risk_free_rate=risk_free_rate,
+                individual_constraints=None
+            )
+
+        if not result['success']:
+            msg = result.get('message', 'Otimização falhou sem mensagem')
+            raise ValueError(f"Otimização falhou: {msg}")
+
+        optimized_weights = result['weights']
+        optimized_assets = result['assets']
+
+        # ========================================
+        # OUT-OF-SAMPLE - USANDO PERÍODO COMPLETO
+        # ========================================
+
+        # Verificar disponibilidade dos ativos no período completo
+        available_assets = [asset for asset in optimized_assets if asset in df_completo.columns]
+        if len(available_assets) != len(optimized_assets):
+            missing = [a for a in optimized_assets if a not in df_completo.columns]
+            raise ValueError(f"Ativos indisponíveis no período completo: {missing}")
+
+        # IMPORTANTE: Usar o PERÍODO COMPLETO já em base zero
+        optimizer_completo = PortfolioOptimizer(df_completo, available_assets)
+
+        # Calcular retornos do portfólio para período completo
+        portfolio_returns_completo = np.dot(optimizer_completo.returns_data.values, optimized_weights)
+        cumulative_completo = np.cumsum(portfolio_returns_completo)
+
+        # Identificar índices dos períodos
+        n_dias_otim = len(df_otim)
+        n_dias_total = len(df_completo)
+        n_dias_valid = n_dias_total - n_dias_otim
+
+        if n_dias_valid <= 0:
+            raise ValueError(f"Período de validação inválido: {n_dias_valid} dias (otim={n_dias_otim}, total={n_dias_total})")
+
+        # ========== DIAS CORRIDOS REAIS ==========
+        # Usar datas do df_valid para calcular dias corridos
+        primeira_data_valid = pd.to_datetime(df_valid['Data'].iloc[0])
+        ultima_data_valid = pd.to_datetime(df_valid['Data'].iloc[-1])
+        n_dias_corridos_valid = (ultima_data_valid - primeira_data_valid).days + 1
+
+        # ========== 1. RETORNO DO PORTFÓLIO ==========
+        # Valores acumulados usando o período completo
+        portfolio_acum_fim_otim = cumulative_completo[n_dias_otim - 1]
+        portfolio_acum_fim_valid = cumulative_completo[-1]
+
+        # Retorno do período de validação (fórmula correta)
+        retorno_periodo_valid = (1 + portfolio_acum_fim_valid) / (1 + portfolio_acum_fim_otim) - 1
+
+        # Anualizar retorno
+        if n_dias_corridos_valid > 0:
+            retorno_anual_valid = (1 + retorno_periodo_valid) ** (365/n_dias_corridos_valid) - 1
+        else:
+            retorno_anual_valid = 0
+
+        # ========== 2. TAXA LIVRE DE RISCO ==========
+        if hasattr(optimizer_completo, 'risk_free_cumulative') and optimizer_completo.risk_free_cumulative is not None:
+            try:
+                # Valores acumulados da taxa livre usando período completo
+                taxa_acum_fim_otim = optimizer_completo.risk_free_cumulative.iloc[n_dias_otim - 1]
+                taxa_acum_fim_valid = optimizer_completo.risk_free_cumulative.iloc[-1]
+
+                # Taxa do período de validação (fórmula correta)
+                taxa_periodo_valid = (1 + taxa_acum_fim_valid) / (1 + taxa_acum_fim_otim) - 1
+
+                # Anualizar taxa
+                if n_dias_corridos_valid > 0:
+                    taxa_anual_valid = (1 + taxa_periodo_valid) ** (365/n_dias_corridos_valid) - 1
+                else:
+                    taxa_anual_valid = 0
+
+            except Exception as e:
+                taxa_periodo_valid = 0
+                taxa_anual_valid = 0
+        else:
+            taxa_periodo_valid = 0
+            taxa_anual_valid = 0
+
+        # ========== 3. VOLATILIDADE ==========
+        # Usar apenas o período de validação para volatilidade
+        portfolio_cumulative_validacao = cumulative_completo[n_dias_otim:]
+
+        if len(portfolio_cumulative_validacao) > 1:
+            # Adicionar o valor do fim da otimização como ponto inicial
+            portfolio_cumulative_validacao_completo = np.concatenate(
+                [[portfolio_acum_fim_otim], portfolio_cumulative_validacao]
+            )
+
+            # Calcular variações percentuais diárias
+            variac_result_pu = (1 + portfolio_cumulative_validacao_completo[1:]) / (1 + portfolio_cumulative_validacao_completo[:-1])
+            portfolio_returns_pct_valid = variac_result_pu - 1
+
+            # Volatilidade anualizada
+            vol_valid = np.std(portfolio_returns_pct_valid, ddof=0) * np.sqrt(252)
+        else:
+            vol_valid = 0
+            portfolio_returns_pct_valid = np.array([])
+
+        # ========== 4. SHARPE E SORTINO ==========
+        # Excesso de retorno
+        excesso_anual_valid = retorno_anual_valid - taxa_anual_valid
+
+        # Sharpe
+        if vol_valid > 0:
+            sharpe_valid = excesso_anual_valid / vol_valid
+        else:
+            sharpe_valid = 0
+
+        # ========== 5. VaR ==========
+        if len(portfolio_returns_pct_valid) > 0:
+            mean_daily_return = np.mean(portfolio_returns_pct_valid)
+            std_daily_return = np.std(portfolio_returns_pct_valid, ddof=0)
+            var_95_daily_valid = mean_daily_return - 1.65 * std_daily_return
+        else:
+            var_95_daily_valid = 0
+
+        # ========== 6. PERCENTUAL POSITIVOS ==========
+        if len(portfolio_returns_pct_valid) > 0:
+            positive_returns = portfolio_returns_pct_valid[portfolio_returns_pct_valid > 0]
+            total_returns = len(portfolio_returns_pct_valid)
+            positive_return_pct = len(positive_returns) / total_returns if total_returns > 0 else 0
+        else:
+            positive_return_pct = 0
+
+        # RETORNAR métricas
+        return {
+            'n_assets': len(available_assets),
+            'sharpe': sharpe_valid,
+            'annual_return': retorno_anual_valid,
+            'volatility': vol_valid,
+            'positive_return_pct': positive_return_pct,
+            'total_return': retorno_periodo_valid,
+            'risk_free_annual': taxa_anual_valid,
+            'risk_free_period': taxa_periodo_valid,
+            'excess_annual': excesso_anual_valid,
+            'var_95': var_95_daily_valid,
+            'n_days': n_dias_corridos_valid
+        }
+
+    except Exception as e:
+        # Re-lançar exceção para debug detalhado
+        raise
+
+def calculate_average_metrics_streamlit(step_metrics, config, retorno_anualizado,
+                                        taxa_ref_anualizada, vol_media, sharpe_final,
+                                        retorno_total, dias_totais):
+    """
+    Calcular métricas médias - VERSÃO COM SHARPE RECALCULADO
+    """
+
+    avg_metrics = {}
+
+    # Média simples apenas para N_Ativos e Positivos%
+    for metric in ['n_assets', 'positive_return_pct']:
+        values = [step[metric] for step in step_metrics
+                 if metric in step and step[metric] is not None]
+        avg_metrics[metric] = sum(values) / len(values) if values else 0
+
+    # Usar valores já calculados
+    avg_metrics['annual_return'] = retorno_anualizado
+    avg_metrics['risk_free_annual'] = taxa_ref_anualizada
+    avg_metrics['volatility'] = vol_media
+    avg_metrics['sharpe'] = sharpe_final
+
+    result = {
+        'config': config,
+        'metrics': avg_metrics,
+        'n_steps': len(step_metrics),
+        'total_return': retorno_total,
+        'total_days': dias_totais
+    }
+
+    return result
+
+# =============================================================================
+# SEÇÃO DE AUTO-OTIMIZAÇÃO
+# =============================================================================
+
+if dados_brutos is not None and df is not None:
+    st.markdown("---")
+    st.header("🤖 Auto-Otimização Inteligente")
+
+    # Detectar coluna de taxa livre de risco
+    risk_free_column_name_auto = None
+    if len(dados_brutos.columns) > 2 and isinstance(dados_brutos.columns[1], str):
+        col_name = dados_brutos.columns[1].lower()
+        if any(term in col_name for term in ['taxa', 'livre', 'risco', 'ibov', 'ref', 'cdi', 'selic']):
+            risk_free_column_name_auto = dados_brutos.columns[1]
+
+    with st.expander("ℹ️ O que é Auto-Otimização?", expanded=False):
+        st.markdown("""
+        ### Walk-Forward Optimization com Ranking Dinâmico
+
+        A Auto-Otimização executa **múltiplos testes** combinando diferentes:
+        - **Janelas de Otimização** (3m, 6m, 1a, 2a, 3a)
+        - **Períodos de Rebalanceamento** (1sem, 2sem, 1mes, 2mes, 3mes)
+        - **Objetivos de Otimização** (Sharpe, Risco, HC10, Qualidade)
+
+        Para cada combinação, o sistema:
+        1. Divide os dados em períodos de treino e validação
+        2. Otimiza no período de treino
+        3. Valida no período seguinte (out-of-sample)
+        4. Avança no tempo e repete o processo
+        5. Acumula resultados e calcula métricas finais
+
+        **Resultado:** Você descobre qual combinação de parâmetros teria performado melhor historicamente!
+        """)
+
+    # Interface de controles
+    st.subheader("⚙️ Configuração da Auto-Otimização")
+
+    col_left, col_right = st.columns([3, 2])
+
+    with col_left:
+        # Parâmetros em colunas
+        param_col1, param_col2 = st.columns(2)
+
+        with param_col1:
+            st.markdown("**📅 Janelas de Otimização**")
+            otim_3m = st.checkbox("3 meses", value=False, key="auto_otim_3m")
+            otim_6m = st.checkbox("6 meses", value=True, key="auto_otim_6m")
+            otim_1a = st.checkbox("1 ano", value=True, key="auto_otim_1a")
+            otim_2a = st.checkbox("2 anos", value=False, key="auto_otim_2a")
+            otim_3a = st.checkbox("3 anos", value=False, key="auto_otim_3a")
+
+        with param_col2:
+            st.markdown("**🔍 Períodos de Rebalanceamento**")
+            rebal_1sem = st.checkbox("1 semana", value=False, key="auto_rebal_1sem")
+            rebal_2sem = st.checkbox("2 semanas", value=False, key="auto_rebal_2sem")
+            rebal_1mes = st.checkbox("1 mês", value=True, key="auto_rebal_1mes")
+            rebal_2mes = st.checkbox("2 meses", value=True, key="auto_rebal_2mes")
+            rebal_3mes = st.checkbox("3 meses", value=False, key="auto_rebal_3mes")
+
+        obj_col1, obj_col2 = st.columns(2)
+
+        with obj_col1:
+            st.markdown("**🎯 Objetivos**")
+            obj_sharpe = st.checkbox("Maximizar Sharpe", value=True, key="auto_obj_sharpe")
+            obj_volatility = st.checkbox("Minimizar Risco", value=False, key="auto_obj_vol")
+
+        with obj_col2:
+            st.markdown("**🎯 Objetivos Avançados**")
+            obj_hc10 = st.checkbox("Maximizar Inc/[(1-R²)×Vol]", value=False, key="auto_obj_hc10")
+            obj_quality = st.checkbox("Qualidade Linear", value=False, key="auto_obj_quality")
+
+        # Configurações globais
+        config_col1, config_col2 = st.columns(2)
+
+        with config_col1:
+            st.markdown("**🏆 Limites de Ranking**")
+            rank_min = st.number_input("Score Mínimo", min_value=0.0, max_value=100.0, value=0.0, step=1.0, key="auto_rank_min")
+            rank_max = st.number_input("Score Máximo", min_value=0.0, max_value=100.0, value=100.0, step=1.0, key="auto_rank_max")
+
+        with config_col2:
+            st.markdown("**⚖️ Limites de Peso**")
+            weight_min = st.number_input("Peso Mínimo (%)", min_value=0.0, max_value=100.0, value=0.0, step=1.0, key="auto_weight_min")
+            weight_max = st.number_input("Peso Máximo (%)", min_value=0.0, max_value=100.0, value=30.0, step=1.0, key="auto_weight_max")
+
+        # Opção de shorts
+        st.markdown("**🔻 Posições Vendidas (Shorts)**")
+        use_auto_shorts = st.checkbox("Habilitar posições short", value=False, key="auto_use_shorts")
+
+        if use_auto_shorts:
+            short_col1, short_col2 = st.columns(2)
+            with short_col1:
+                short_asset_auto = st.text_input("Ativo para Short", value="BOVA11", key="auto_short_asset")
+            with short_col2:
+                short_weight_auto = st.number_input("Peso Short (%)", min_value=-100.0, max_value=0.0, value=-100.0, step=1.0, key="auto_short_weight")
+
+    with col_right:
+        # Estimativa
+        st.markdown("**📊 Estimativa**")
+
+        if st.button("🧮 Calcular Estimativa", key="calc_estimate_btn"):
+            try:
+                # Contar seleções
+                otim_count = sum([otim_3m, otim_6m, otim_1a, otim_2a, otim_3a])
+                rebal_count = sum([rebal_1sem, rebal_2sem, rebal_1mes, rebal_2mes, rebal_3mes])
+                obj_count = sum([obj_sharpe, obj_volatility, obj_hc10, obj_quality])
+
+                if otim_count == 0 or rebal_count == 0 or obj_count == 0:
+                    st.warning("⚠️ Selecione ao menos 1 opção de cada categoria")
+                else:
+                    # Calcular período total
+                    data_inicial = pd.to_datetime(dados_brutos['Data'].iloc[0])
+                    data_final = pd.to_datetime(dados_brutos['Data'].iloc[-1])
+                    total_calendar_days = (data_final - data_inicial).days + 1
+
+                    # Mapeamento de períodos
+                    period_to_days = {
+                        '3m': 90, '6m': 180, '1a': 365, '2a': 730, '3a': 1095,
+                        '1sem': 7, '2sem': 14, '1mes': 30, '2mes': 60, '3mes': 90
+                    }
+
+                    # Estimar steps
+                    total_configs = otim_count * rebal_count * obj_count
+
+                    st.success(f"✅ **{total_configs} configurações** serão testadas")
+                    st.info(f"📅 Período disponível: **{total_calendar_days} dias**")
+                    st.info(f"⏱️ Tempo estimado: ~{total_configs * 0.5:.1f} segundos")
+
+            except Exception as e:
+                st.error(f"❌ Erro ao calcular: {str(e)}")
+
+        # Botão principal
+        st.markdown("---")
+        run_auto_optimization = st.button("🚀 INICIAR AUTO-OTIMIZAÇÃO", type="primary", use_container_width=True, key="run_auto_opt_btn")
+
+    # Executar Auto-Otimização
+    if run_auto_optimization:
+        # Validação
+        otim_windows = {
+            '3m': otim_3m, '6m': otim_6m, '1a': otim_1a, '2a': otim_2a, '3a': otim_3a
+        }
+        rebal_periods = {
+            '1sem': rebal_1sem, '2sem': rebal_2sem, '1mes': rebal_1mes,
+            '2mes': rebal_2mes, '3mes': rebal_3mes
+        }
+        objectives = {
+            'sharpe': obj_sharpe, 'volatility': obj_volatility,
+            'hc10': obj_hc10, 'quality_linear': obj_quality
+        }
+
+        if not any(otim_windows.values()):
+            st.error("❌ Selecione pelo menos uma janela de otimização!")
+        elif not any(rebal_periods.values()):
+            st.error("❌ Selecione pelo menos um período de rebalanceamento!")
+        elif not any(objectives.values()):
+            st.error("❌ Selecione pelo menos um objetivo!")
+        else:
+            # Preparar configurações
+            configs = []
+
+            selected_otim = [p for p, v in otim_windows.items() if v]
+            selected_rebal = [p for p, v in rebal_periods.items() if v]
+            selected_obj = [p for p, v in objectives.items() if v]
+
+            for otim_period in selected_otim:
+                for rebal_period in selected_rebal:
+                    for obj_key in selected_obj:
+                        config = {
+                            'otim_period': otim_period,
+                            'rebal_period': rebal_period,
+                            'objective': obj_key,
+                            'rank_min': rank_min,
+                            'rank_max': rank_max,
+                            'weight_min': weight_min / 100,
+                            'weight_max': weight_max / 100,
+                            'use_shorts': use_auto_shorts,
+                            'short_asset': short_asset_auto if use_auto_shorts else None,
+                            'short_weight': short_weight_auto / 100 if use_auto_shorts else 0,
+                            'desc': f"{otim_period}_{rebal_period}_{obj_key}"
+                        }
+                        configs.append(config)
+
+            # Executar testes
+            st.info(f"🔄 Iniciando {len(configs)} configurações...")
+
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            error_messages = []
+            results = []
+
+            # Criar área para mensagens de debug
+            debug_area = st.empty()
+
+            for i, config in enumerate(configs):
+                config_desc = f"{config['otim_period']}+{config['rebal_period']}+{config['objective']}"
+                status_text.text(f"[{i+1}/{len(configs)}] {config_desc}")
+
+                try:
+                    # Executar walk-forward para esta configuração
+                    config_result = run_walk_forward_test_streamlit(
+                        dados_brutos, config, risk_free_column_name_auto
+                    )
+
+                    if config_result:
+                        results.append(config_result)
+                        status_text.text(f"[{i+1}/{len(configs)}] ✅ {config_desc}")
+                    else:
+                        error_msg = f"Config {config_desc} retornou None"
+                        error_messages.append(error_msg)
+                        status_text.text(f"[{i+1}/{len(configs)}] ❌ {config_desc} FALHOU")
+
+                except Exception as e:
+                    error_msg = f"Config {config_desc}: {str(e)}"
+                    error_messages.append(error_msg)
+                    status_text.text(f"[{i+1}/{len(configs)}] ❌ {config_desc} ERRO: {str(e)[:50]}")
+
+                progress_bar.progress((i + 1) / len(configs))
+
+            progress_bar.empty()
+            status_text.empty()
+
+            # Mostrar erros se houver
+            if error_messages:
+                with st.expander(f"⚠️ Detalhes dos Erros ({len(error_messages)} falhas)", expanded=False):
+                    for error in error_messages:
+                        st.text(error)
+
+            # Processar e exibir resultados
+            if results:
+                st.success(f"🎉 Concluído! {len(results)}/{len(configs)} configurações válidas")
+
+                # Ordenar por Sharpe
+                results.sort(key=lambda x: x['metrics']['sharpe'], reverse=True)
+
+                # Criar DataFrame para exibição
+                obj_names = {
+                    'sharpe': 'Sharpe',
+                    'volatility': 'MinRisco',
+                    'hc10': 'Inc/[(1-R²)×Vol]',
+                    'quality_linear': 'Qualidade'
+                }
+
+                results_data = []
+                for i, result in enumerate(results):
+                    config = result['config']
+                    metrics = result['metrics']
+
+                    results_data.append({
+                        'Rank': i + 1,
+                        'Otimização': config['otim_period'],
+                        'Rebalanceamento': config['rebal_period'],
+                        'Objetivo': obj_names.get(config['objective'], config['objective']),
+                        'N_Ativos': int(metrics['n_assets']),
+                        'Sharpe': f"{metrics['sharpe']:.3f}",
+                        'Retorno(%)': f"{metrics['annual_return']:.1%}",
+                        'Taxa_Ref(%)': f"{metrics.get('risk_free_annual', 0):.1%}",
+                        'Volatilidade(%)': f"{metrics['volatility']:.1%}",
+                        'Positivos(%)': f"{metrics['positive_return_pct']:.1%}"
+                    })
+
+                df_results = pd.DataFrame(results_data)
+
+                # Exibir tabela
+                st.dataframe(df_results, use_container_width=True, height=400)
+
+                # Salvar no session_state
+                st.session_state['auto_optimization_results'] = df_results
+
+                # Botões de exportação
+                export_col1, export_col2 = st.columns(2)
+
+                with export_col1:
+                    csv = df_results.to_csv(index=False, encoding='utf-8-sig')
+                    st.download_button(
+                        label="💾 Exportar CSV",
+                        data=csv,
+                        file_name="auto_otimizacao_resultados.csv",
+                        mime="text/csv",
+                        key="download_csv_auto"
+                    )
+
+                with export_col2:
+                    # Criar Excel em memória
+                    from io import BytesIO
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df_results.to_excel(writer, sheet_name='Resultados Auto-Otimização', index=False)
+                    output.seek(0)
+
+                    st.download_button(
+                        label="📊 Exportar Excel",
+                        data=output,
+                        file_name="auto_otimizacao_resultados.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="download_excel_auto"
+                    )
+            else:
+                st.error("❌ Nenhum resultado válido obtido")
+
 else:
     # Mensagem quando não há dados
     st.info("👈 Faça upload de uma planilha Excel para começar")
@@ -2749,5 +3409,5 @@ else:
 
 # Rodapé
 st.markdown("---")
-st.markdown("*Desenvolvido com Streamlit - Otimizador de Portfólio v3.0* 🚀")
-st.markdown("*Agora com Janelas Temporais para Backtesting Profissional*")
+st.markdown("*Desenvolvido com Streamlit - Otimizador de Portfólio v3.1* 🚀")
+st.markdown("*Agora com Janelas Temporais e Auto-Otimização Walk-Forward*")
