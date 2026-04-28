@@ -2075,7 +2075,7 @@ if dados_brutos is not None:
                                                 lambda x: f"{x:.2%}" if pd.notna(x) else "-"
                                             )
                                         
-                                        styled_table = monthly_display.style.applymap(color_negative_red)
+                                        styled_table = monthly_display.style.map(color_negative_red)
                                         st.dataframe(styled_table, use_container_width=True)
                                         
                                         st.caption("💡 Esta tabela mostra apenas o período de otimização (treino)")
@@ -2409,7 +2409,7 @@ if dados_brutos is not None:
                                                 )
                                             
                                             # Aplicar estilo
-                                            styled_monthly_complete = monthly_display_complete.style.applymap(color_monthly_values)
+                                            styled_monthly_complete = monthly_display_complete.style.map(color_monthly_values)
                                             
                                             # Informações do período
                                             if 'optimizer_valid' in locals() and hasattr(optimizer_valid, 'returns_data'):
@@ -2701,8 +2701,8 @@ if dados_brutos is not None:
                                             pass
                                         return ''
                                     
-                                    styled_df = df_comparison.style.applymap(
-                                        highlight_diff, 
+                                    styled_df = df_comparison.style.map(
+                                        highlight_diff,
                                         subset=['Diferença']
                                     )
                                     
