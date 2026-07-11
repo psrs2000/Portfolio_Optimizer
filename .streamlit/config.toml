@@ -5,6 +5,14 @@ secondaryBackgroundColor = "#F0F2F6"
 textColor = "#262730"
 font = "sans serif"
 
+[server]
+# Necessário para rodar dentro do container/EasyPanel atrás do proxy reverso (Traefik)
+headless = true
+address = "0.0.0.0"
+port = 8501
+enableCORS = false
+enableXsrfProtection = false
+
 [browser]
 gatherUsageStats = false
 

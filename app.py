@@ -21,11 +21,21 @@ def load_optimizer_from_private_repo():
         # Configurações do repositório privado
         GITHUB_USER = "psrs2000"  # Seu usuário
         PRIVATE_REPO = "Portfolio_Optimizer_PVT"  # Nome do repo privado
-        GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")  # Token do GitHub
-        
+
+        # Token do GitHub: tenta ler das secrets do Streamlit e, se não houver
+        # (ex.: deploy no EasyPanel/Docker), usa a variável de ambiente GITHUB_TOKEN.
+        GITHUB_TOKEN = ""
+        try:
+            GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
+        except Exception:
+            # Nenhum arquivo secrets.toml presente — segue para o fallback de env var
+            GITHUB_TOKEN = ""
+        if not GITHUB_TOKEN:
+            GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+
         if not GITHUB_TOKEN:
             st.error("❌ Token do GitHub não configurado!")
-            st.info("Configure GITHUB_TOKEN nas secrets do Streamlit")
+            st.info("Configure a variável de ambiente GITHUB_TOKEN (EasyPanel) ou nas secrets do Streamlit")
             return None
         
         # URL da API do GitHub para buscar o arquivo
@@ -102,10 +112,10 @@ if PortfolioOptimizer is None:
        - Clique em "Generate new token (classic)"
        - Marque: `repo` (acesso completo aos repositórios)
        
-    2. **Configurar token no Streamlit:**
-       - No Streamlit Cloud: Settings > Secrets
-       - Adicionar linha: `GITHUB_TOKEN = "seu_token_aqui"`
-       
+    2. **Configurar token:**
+       - No Streamlit Cloud: Settings > Secrets → `GITHUB_TOKEN = "seu_token_aqui"`
+       - No EasyPanel: aba **Environment** do serviço → variável `GITHUB_TOKEN=seu_token_aqui`
+
     3. **Verificar repositório privado:**
        - Nome: `Portfolio_Optimizer_PVT`
        - Arquivo: `optimizer.py` na raiz
