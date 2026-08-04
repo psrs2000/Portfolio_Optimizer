@@ -200,6 +200,24 @@ Permite definir limites específicos para ativos selecionados.
 2. Selecione os ativos que terão limites customizados  
 3. Defina Min% e Max% para cada ativo selecionado  
 
+### 📥 Importar Restrições de Excel/CSV
+
+Em vez de digitar ativo por ativo, você pode enviar uma planilha:
+
+| Formato | Colunas | Efeito |
+|---|---|---|
+| **Faixas** | `Ativo`, `Min`, `Max` | Define mínimo e máximo por ativo |
+| **Pesos fixos** | `Ativo`, `Peso` | Fixa min = max = peso |
+
+• Valores em percentual (`30` = 30%) ou fração (`0.30`)  
+• Aceita vírgula decimal, símbolo `%` e CSV com `;` ou tabulação  
+• Nomes de coluna flexíveis (`Ticker`, `Mínimo`, `Máximo`, `Peso`...)  
+• Ativos fora da seleção atual são ignorados, com aviso  
+
+> 🔒 **Modo analisador de carteira:** com pesos fixos somando 100%, o
+> otimizador fica travado exatamente naquela composição — útil para
+> avaliar as métricas de uma carteira que você já possui.
+
 ### Exemplos Práticos
 • **Manter posição:** PETR4 → Min: 15%, Max: 15%  
 • **Posição principal:** VALE3 → Min: 20%, Max: 40%  
@@ -254,6 +272,26 @@ Permite incluir vendas a descoberto (posições negativas) na carteira.
 #### 📈 **Aba "Comparação"**
 • **Tabela comparativa:** In-sample vs Out-of-sample  
 • **Análise de robustez:** Performance fora da amostra  
+
+### 🤖 Colunas da Auto-Otimização
+
+| Coluna | Significado |
+|---|---|
+| **Sharpe** | Sharpe do walk-forward completo |
+| **Retorno(%)** | Retorno anualizado |
+| **Meta_OK(%)** | % dos rebalanceamentos que bateram a meta *dentro* da janela de otimização (`—` se a meta não foi usada) |
+| **Taxa_Ref(%)** | Taxa de referência anualizada |
+| **Volatilidade(%)** | Risco anualizado |
+| **VaR(%)** | Perda diária esperada no pior 5% dos dias (média dos períodos) |
+| **Pos>Ref(%)** | % dos períodos que superaram a taxa de referência |
+| **Positivos(%)** | % dos períodos com retorno acima de zero |
+
+> ⚠️ **Positivos** e **Pos>Ref** são medidos **por período de rebalanceamento**,
+> não por dia.
+
+**Exportação:** CSV e Excel saem com **números de verdade** (não texto), então
+dá para ordenar e recalcular na planilha. No Excel os percentuais vêm com
+formato de célula percentual; no CSV, já multiplicados (`18.5` = 18,5%).
 
 ### Métricas Principais
 

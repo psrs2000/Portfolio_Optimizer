@@ -733,6 +733,115 @@ def create_monthly_returns_table(returns_data, weights, dates=None, risk_free_re
     
     return pivot_table, comparison_table
 
+def load_constraints_from_file(uploaded_file):
+    """
+    Lê um arquivo Excel/CSV com restrições por ativo.
+
+    Formatos aceitos (nomes de coluna flexíveis, sem diferenciar maiúsculas):
+      • 'Ativo', 'Min', 'Max'  -> usa mínimo e máximo por ativo (faixas)
+      • 'Ativo', 'Peso'        -> fixa min = max = peso
+                                  (útil para ANALISAR um portfólio pronto:
+                                   quando os pesos somam 100%, o otimizador
+                                   é forçado exatamente àquela composição)
+
+    Valores em PERCENTUAL (ex.: 30 = 30%). Se TODOS os valores forem <= 1,
+    assume-se que já estão em fração (ex.: 0.30 = 30%).
+
+    Retorna: (constraints, warnings)
+      constraints = {ativo: {'min': fração, 'max': fração}}
+      warnings    = lista de avisos (strings)
+    """
+    warnings = []
+    nome = getattr(uploaded_file, 'name', '') or ''
+    ext = os.path.splitext(nome)[1].lower()
+
+    if ext in ('.xlsx', '.xls'):
+        df = pd.read_excel(uploaded_file)
+    else:
+        # CSV: detecta separador automaticamente (vírgula, ponto-e-vírgula, tab)
+        df = pd.read_csv(uploaded_file, sep=None, engine='python')
+
+    if df is None or df.empty or len(df.columns) < 2:
+        raise ValueError("Arquivo vazio ou sem colunas suficientes "
+                         "(mínimo: coluna de ativo + 1 coluna de valor).")
+
+    low = {c: str(c).strip().lower() for c in df.columns}
+
+    def find(terms, exclude=()):
+        for col, name in low.items():
+            if any(t in name for t in terms) and not any(e in name for e in exclude):
+                return col
+        return None
+
+    asset_col = find(['ativo', 'asset', 'ticker', 'papel', 'codigo', 'código', 'symbol', 'nome'])
+    min_col = find(['min', 'mín'])
+    max_col = find(['max', 'máx'])
+    weight_col = find(['peso', 'weight', 'quant', 'aloca', 'aloc', 'percent', 'participa'])
+
+    if asset_col is None:
+        asset_col = df.columns[0]
+
+    def to_float(v):
+        if pd.isna(v):
+            return None
+        s = str(v).strip().replace('%', '').replace(' ', '')
+        if s == '':
+            return None
+        if ',' in s and '.' in s:
+            s = s.replace('.', '').replace(',', '.')   # 1.234,56 -> 1234.56
+        elif ',' in s:
+            s = s.replace(',', '.')                     # 30,5 -> 30.5
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    raw = {}
+    if min_col is not None and max_col is not None:
+        for _, row in df.iterrows():
+            asset = str(row[asset_col]).strip()
+            if not asset or asset.lower() == 'nan':
+                continue
+            mn = to_float(row[min_col])
+            mx = to_float(row[max_col])
+            if mn is None or mx is None:
+                warnings.append(f"'{asset}': valor mín/máx inválido, ignorado.")
+                continue
+            raw[asset] = [mn, mx]
+    else:
+        # Coluna única de peso -> min = max = peso
+        if weight_col is None:
+            weight_col = df.columns[1]   # assume 2ª coluna como peso
+        for _, row in df.iterrows():
+            asset = str(row[asset_col]).strip()
+            if not asset or asset.lower() == 'nan':
+                continue
+            w = to_float(row[weight_col])
+            if w is None:
+                warnings.append(f"'{asset}': peso inválido, ignorado.")
+                continue
+            raw[asset] = [w, w]
+
+    if not raw:
+        raise ValueError("Nenhum ativo válido encontrado no arquivo.")
+
+    # Percentual (0-100) vs fração (0-1): decide pela maior magnitude presente
+    all_vals = [abs(v) for pair in raw.values() for v in pair]
+    max_val = max(all_vals) if all_vals else 0
+    scale = 1.0 if max_val <= 1.0 else 0.01
+
+    constraints = {}
+    for asset, (mn, mx) in raw.items():
+        mn *= scale
+        mx *= scale
+        if mn > mx:
+            mn, mx = mx, mn
+            warnings.append(f"'{asset}': mín > máx, valores invertidos.")
+        constraints[asset] = {'min': max(0.0, mn), 'max': max(0.0, mx)}
+
+    return constraints, warnings
+
+
 def load_from_github(filename):
     """
     Carrega arquivo Excel diretamente do GitHub
@@ -1914,10 +2023,111 @@ if dados_brutos is not None:
             )
             
             if use_individual_constraints:
+                # Importar restrições de uma planilha (Excel/CSV)
+                with st.expander("📥 Importar restrições de Excel/CSV", expanded=False):
+                    st.markdown("""
+                    Envie uma planilha com uma destas estruturas:
+
+                    | Formato | Colunas | Efeito |
+                    |---|---|---|
+                    | Faixas | `Ativo`, `Min`, `Max` | Define mínimo e máximo por ativo |
+                    | Pesos fixos | `Ativo`, `Peso` | Fixa min = max = peso |
+
+                    Valores em percentual (`30` = 30%) ou fração (`0.30`).
+
+                    > 💡 Com **pesos fixos somando 100%**, o otimizador é travado
+                    > naquela composição — a ferramenta vira um analisador de carteira.
+                    """)
+
+                    # A chave carrega um contador para que "Limpar importadas"
+                    # possa descartar o arquivo já enviado (recriando o widget).
+                    uploader_seq = st.session_state.get('constraints_uploader_seq', 0)
+                    constraints_file = st.file_uploader(
+                        "Arquivo de restrições",
+                        type=['xlsx', 'xls', 'csv'],
+                        key=f"constraints_uploader_{uploader_seq}"
+                    )
+
+                    if constraints_file is not None:
+                        # Processar cada arquivo apenas uma vez: sem esta guarda, o
+                        # rerun do Streamlit reimportaria a cada interação da página.
+                        file_id = (
+                            getattr(constraints_file, 'file_id', None)
+                            or f"{constraints_file.name}:{constraints_file.size}"
+                        )
+                        ja_processado = st.session_state.get('imported_constraints_file') == file_id
+
+                        try:
+                            imported, import_warnings = load_constraints_from_file(constraints_file)
+
+                            # Manter apenas ativos presentes nos dados carregados
+                            reconhecidos = {a: v for a, v in imported.items() if a in selected_assets}
+                            ignorados = [a for a in imported if a not in selected_assets]
+
+                            if reconhecidos:
+                                if not ja_processado:
+                                    st.session_state['imported_constraints'] = reconhecidos
+                                    st.session_state['imported_constraints_file'] = file_id
+                                    # Limpar os campos min/max já renderizados: com a chave
+                                    # presente no session_state, o Streamlit ignoraria os
+                                    # novos valores padrão vindos do arquivo.
+                                    for a in reconhecidos:
+                                        st.session_state.pop(f"min_{a}", None)
+                                        st.session_state.pop(f"max_{a}", None)
+                                    st.rerun()
+
+                                st.success(
+                                    f"✅ {len(reconhecidos)} ativo(s) importado(s): "
+                                    + ", ".join(list(reconhecidos)[:8])
+                                    + ("..." if len(reconhecidos) > 8 else "")
+                                )
+
+                                soma = sum(v['max'] for v in reconhecidos.values())
+                                fixos = all(abs(v['max'] - v['min']) < 1e-9 for v in reconhecidos.values())
+                                if fixos and abs(soma - 1.0) < 0.01:
+                                    st.info(
+                                        "🔒 Pesos fixos somando 100% — o otimizador ficará "
+                                        "travado nesta composição (modo analisador de carteira)."
+                                    )
+                            else:
+                                st.error("❌ Nenhum ativo do arquivo corresponde aos ativos selecionados.")
+
+                            if ignorados:
+                                st.warning(
+                                    f"⚠️ Ignorados (não estão entre os ativos selecionados): "
+                                    + ", ".join(ignorados[:10])
+                                    + ("..." if len(ignorados) > 10 else "")
+                                )
+
+                            for aviso in import_warnings:
+                                st.warning(f"⚠️ {aviso}")
+
+                        except Exception as e:
+                            st.error(f"❌ Erro ao ler o arquivo: {e}")
+
+                imported_constraints = st.session_state.get('imported_constraints', {})
+
+                if imported_constraints:
+                    col_imp1, col_imp2 = st.columns([3, 1])
+                    with col_imp1:
+                        st.caption(f"📥 {len(imported_constraints)} restrição(ões) importada(s) em uso.")
+                    with col_imp2:
+                        if st.button("🗑️ Limpar importadas", key="clear_imported"):
+                            for a in imported_constraints:
+                                st.session_state.pop(f"min_{a}", None)
+                                st.session_state.pop(f"max_{a}", None)
+                            st.session_state.pop('imported_constraints', None)
+                            st.session_state.pop('imported_constraints_file', None)
+                            # Recria o uploader para descartar o arquivo enviado
+                            st.session_state['constraints_uploader_seq'] = uploader_seq + 1
+                            st.rerun()
+
                 # Selecionar quais ativos terão restrições individuais
+                # (os importados já vêm marcados)
                 constrained_assets = st.multiselect(
                     "Selecione os ativos com restrições específicas:",
                     options=selected_assets,
+                    default=[a for a in imported_constraints if a in selected_assets],
                     help="Escolha apenas os ativos que precisam de limites diferentes dos globais"
                 )
                 
@@ -1933,9 +2143,13 @@ if dados_brutos is not None:
                         with cols[idx % num_cols] if num_cols > 0 else st.container():
                             st.markdown(f"**{asset}**")
                             
-                            # Valores padrão baseados nos limites globais
-                            default_min = min_weight * 100
-                            default_max = max_weight * 100
+                            # Valores importados têm prioridade; senão, limites globais
+                            if asset in imported_constraints:
+                                default_min = imported_constraints[asset]['min'] * 100
+                                default_max = imported_constraints[asset]['max'] * 100
+                            else:
+                                default_min = min_weight * 100
+                                default_max = max_weight * 100
                             
                             # Criar duas colunas para min e max lado a lado
                             col_min, col_max = st.columns(2)
@@ -3182,6 +3396,12 @@ def execute_single_step_streamlit(df_otim, df_valid, df_completo, config, step_n
         optimized_weights = result['weights']
         optimized_assets = result['assets']
 
+        # A meta é exigida DENTRO da janela de otimização (in-sample). Guardamos
+        # se ela foi cumprida neste step para depois separar "não atingiu porque
+        # era inatingível" de "atingiu mas não se sustentou fora da amostra".
+        # None = meta não estava em uso neste teste.
+        meta_ok_step = result.get('meta_atingida') if result.get('meta_used') else None
+
         # ========================================
         # OUT-OF-SAMPLE - USANDO PERÍODO COMPLETO
         # ========================================
@@ -3308,7 +3528,8 @@ def execute_single_step_streamlit(df_otim, df_valid, df_completo, config, step_n
             'risk_free_period': taxa_periodo_valid,
             'excess_annual': excesso_anual_valid,
             'var_95': var_95_daily_valid,
-            'n_days': n_dias_corridos_valid
+            'n_days': n_dias_corridos_valid,
+            'meta_atingida': meta_ok_step
         }
 
     except Exception as e:
@@ -3324,11 +3545,38 @@ def calculate_average_metrics_streamlit(step_metrics, config, retorno_anualizado
 
     avg_metrics = {}
 
-    # Média simples apenas para N_Ativos e Positivos%
-    for metric in ['n_assets', 'positive_return_pct']:
-        values = [step[metric] for step in step_metrics
-                 if metric in step and step[metric] is not None]
-        avg_metrics[metric] = sum(values) / len(values) if values else 0
+    # Média simples de N_Ativos
+    values = [step['n_assets'] for step in step_metrics
+              if 'n_assets' in step and step['n_assets'] is not None]
+    avg_metrics['n_assets'] = sum(values) / len(values) if values else 0
+
+    # VaR 95% diário médio dos steps (risco de cauda)
+    var_values = [step['var_95'] for step in step_metrics
+                  if step.get('var_95') is not None]
+    avg_metrics['var_95'] = sum(var_values) / len(var_values) if var_values else 0
+
+    # % de PERÍODOS (steps) com resultado positivo — não por dia, por rebalanceamento:
+    #  - Pos Abs : retorno do período > 0
+    #  - Pos>Ref : retorno do período > taxa de referência do período
+    n = len(step_metrics)
+    if n > 0:
+        avg_metrics['positive_return_pct'] = sum(
+            1 for s in step_metrics if s.get('total_return', 0) > 0) / n
+        avg_metrics['positive_vs_ref_pct'] = sum(
+            1 for s in step_metrics
+            if s.get('total_return', 0) > s.get('risk_free_period', 0)) / n
+    else:
+        avg_metrics['positive_return_pct'] = 0
+        avg_metrics['positive_vs_ref_pct'] = 0
+
+    # % de steps que cumpriram a META dentro da janela de otimização.
+    # Diferente das colunas acima (que medem o resultado FORA da amostra),
+    # esta mostra se o alvo era alcançável onde o otimizador podia agir.
+    # None quando a meta não estava em uso (a coluna exibe "—").
+    meta_flags = [s['meta_atingida'] for s in step_metrics
+                  if s.get('meta_atingida') is not None]
+    avg_metrics['meta_ok_pct'] = (
+        sum(1 for f in meta_flags if f) / len(meta_flags) if meta_flags else None)
 
     # Usar valores já calculados
     avg_metrics['annual_return'] = retorno_anualizado
@@ -3624,33 +3872,77 @@ if dados_brutos is not None and df is not None:
                 # Criar DataFrame para exibição
                 obj_names = {
                     'sharpe': 'Sharpe',
+                    'sortino': 'Sortino',
                     'volatility': 'MinRisco',
+                    'under_water': 'MinUW',
                     'hc10': 'Inc/[(1-R²)×Vol]',
-                    'quality_linear': 'Qualidade'
+                    'quality_linear': 'Qualidade',
+                    'excess_hc10': 'Linear.Exc',
+                    'excess_sharpe': 'Sharpe.Exc'
                 }
 
-                results_data = []
+                # Colunas percentuais, guardadas como FRAÇÃO no DataFrame numérico
+                # (0.185) e formatadas apenas na exibição. Assim a exportação sai
+                # com números de verdade, e não com texto contendo "%".
+                pct_cols = ['Retorno(%)', 'Meta_OK(%)', 'Taxa_Ref(%)',
+                            'Volatilidade(%)', 'VaR(%)', 'Pos>Ref(%)', 'Positivos(%)']
+
+                results_data = []      # exibição (texto formatado)
+                results_numeric = []   # exportação (números)
                 for i, result in enumerate(results):
                     config = result['config']
                     metrics = result['metrics']
+                    meta_ok = metrics.get('meta_ok_pct')  # None = meta não utilizada
 
-                    results_data.append({
+                    base = {
                         'Rank': i + 1,
                         'Otimização': config['otim_period'],
                         'Rebalanceamento': config['rebal_period'],
                         'Objetivo': obj_names.get(config['objective'], config['objective']),
                         'N_Ativos': int(metrics['n_assets']),
+                    }
+
+                    results_numeric.append({
+                        **base,
+                        'Sharpe': round(float(metrics['sharpe']), 6),
+                        'Retorno(%)': metrics['annual_return'],
+                        'Meta_OK(%)': meta_ok,
+                        'Taxa_Ref(%)': metrics.get('risk_free_annual', 0),
+                        'Volatilidade(%)': metrics['volatility'],
+                        'VaR(%)': metrics.get('var_95', 0),
+                        'Pos>Ref(%)': metrics.get('positive_vs_ref_pct', 0),
+                        'Positivos(%)': metrics['positive_return_pct'],
+                    })
+
+                    results_data.append({
+                        **base,
                         'Sharpe': f"{metrics['sharpe']:.3f}",
                         'Retorno(%)': f"{metrics['annual_return']:.1%}",
+                        'Meta_OK(%)': "—" if meta_ok is None else f"{meta_ok:.0%}",
                         'Taxa_Ref(%)': f"{metrics.get('risk_free_annual', 0):.1%}",
                         'Volatilidade(%)': f"{metrics['volatility']:.1%}",
-                        'Positivos(%)': f"{metrics['positive_return_pct']:.1%}"
+                        'VaR(%)': f"{metrics.get('var_95', 0):.2%}",
+                        'Pos>Ref(%)': f"{metrics.get('positive_vs_ref_pct', 0):.1%}",
+                        'Positivos(%)': f"{metrics['positive_return_pct']:.1%}",
                     })
 
                 df_results = pd.DataFrame(results_data)
+                df_export = pd.DataFrame(results_numeric)
 
                 # Exibir tabela
                 st.dataframe(df_results, use_container_width=True, height=400)
+
+                with st.expander("ℹ️ O que significam as colunas", expanded=False):
+                    st.markdown("""
+                    - **Meta_OK(%)** — % dos rebalanceamentos que bateram a meta *dentro*
+                      da janela de otimização. "—" quando a meta não foi usada.
+                    - **VaR(%)** — perda diária esperada no pior 5% dos dias (média dos períodos).
+                    - **Pos>Ref(%)** — % dos períodos em que a carteira superou a taxa de referência.
+                    - **Positivos(%)** — % dos períodos com retorno acima de zero.
+
+                    > Positivos e Pos>Ref são medidos **por período de rebalanceamento**,
+                    > não por dia.
+                    """)
 
                 # Salvar no session_state
                 st.session_state['auto_optimization_results'] = df_results
@@ -3659,7 +3951,15 @@ if dados_brutos is not None and df is not None:
                 export_col1, export_col2 = st.columns(2)
 
                 with export_col1:
-                    csv = df_results.to_csv(index=False, encoding='utf-8-sig')
+                    # CSV é texto puro, sem formatação de célula: percentuais saem
+                    # já multiplicados (21.8 em vez de 0.218). O arredondamento é
+                    # necessário porque 0.145*100 vira 14.499999999999998.
+                    df_csv = df_export.copy()
+                    for col in pct_cols:
+                        df_csv[col] = df_csv[col].apply(
+                            lambda v: None if pd.isna(v) else round(float(v) * 100, 4)
+                        )
+                    csv = df_csv.to_csv(index=False, encoding='utf-8-sig')
                     st.download_button(
                         label="💾 Exportar CSV",
                         data=csv,
@@ -3669,11 +3969,20 @@ if dados_brutos is not None and df is not None:
                     )
 
                 with export_col2:
-                    # Criar Excel em memória
+                    # Excel recebe as frações e ganha formato de célula percentual,
+                    # para o valor continuar sendo número (permite recalcular).
                     from io import BytesIO
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df_results.to_excel(writer, sheet_name='Resultados Auto-Otimização', index=False)
+                        df_export.to_excel(writer, sheet_name='Resultados Auto-Otimização', index=False)
+
+                        ws = writer.sheets['Resultados Auto-Otimização']
+                        header = {cell.value: cell.column for cell in ws[1]}
+                        for col in pct_cols:
+                            if col in header:
+                                letter = ws.cell(row=1, column=header[col]).column_letter
+                                for row in range(2, ws.max_row + 1):
+                                    ws[f"{letter}{row}"].number_format = '0.0%'
                     output.seek(0)
 
                     st.download_button(
