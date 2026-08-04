@@ -136,9 +136,9 @@ Agora você tem **três** opções:
 • Ideal para perfis conservadores  
 • Pode resultar em retornos menores  
 
-#### 4. Maximizar Inclinação
-• Busca a maior inclinação da curva de retorno, semu tilizar volatilidade e correlação. 
-• Útil para estratégias de tendência  
+#### 4. Minimizar Under Water
+• Minimiza o tempo e a profundidade que a carteira passa abaixo do topo anterior  
+• Ideal para quem prioriza recuperação rápida de quedas  
 
 #### 5. Maximizar Inclinação/[(1-R²)×Vol]
 • Combina tendência, linearidade e volatilidade  
@@ -153,6 +153,24 @@ Agora você tem **três** opções:
 • Otimiza a linearidade do retorno acima da taxa de referência  
 • Ideal para fundos que buscam superar um benchmark  
 • **Requer taxa de referência**
+
+#### 8. Maximizar Sharpe do Excesso
+• Aplica a lógica do Sharpe sobre o retorno acima da taxa de referência  
+• Combina superação do benchmark com controle de risco  
+• **Requer taxa de referência**
+
+### 🎯 Meta de Retorno (opcional)
+
+Permite exigir um retorno mínimo da carteira otimizada, em dois modos:
+
+• **Relativa:** % acima da taxa de referência no período (ex.: 5% acima do CDI)  
+• **Absoluta:** % ao ano, independente da referência (ex.: 15% ao ano)  
+
+Disponível tanto na otimização manual quanto na Auto-Otimização (onde é
+aplicada em cada janela do walk-forward).
+
+> 💡 Se a meta não for atingível, o otimizador entrega a **melhor carteira
+> viável** e avisa, em vez de simplesmente falhar.
 
 ### 📊 Limites de Peso
 

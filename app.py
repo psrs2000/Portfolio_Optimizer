@@ -1794,20 +1794,21 @@ if dados_brutos is not None:
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            # Lista de objetivos com condicional
+            # Lista de objetivos com condicional (alinhada com o app desktop)
             objectives_list = [
-                "Maximizar Sharpe Ratio", 
+                "Maximizar Sharpe Ratio",
                 "Maximizar Sortino Ratio",
-                "Minimizar Risco", 
-                "Maximizar Inclinação", 
-                "Maximizar Inclinação/[(1-R²)×Vol]"
+                "Minimizar Risco",
+                "Minimizar Under Water",
+                "Maximizar Inclinação/[(1-R²)×Vol]",
+                "Maximizar Qualidade da Linearidade"
             ]
-            
-            # Adicionar objetivo de excesso apenas se taxa livre foi detectada
+
+            # Adicionar objetivos de excesso apenas se taxa livre foi detectada
             if has_risk_free:
-                objectives_list.append("Maximizar Qualidade da Linearidade")
                 objectives_list.append("Maximizar Linearidade do Excesso")
-                
+                objectives_list.append("Maximizar Sharpe do Excesso")
+
             objective = st.selectbox(
                 "🎯 Objetivo da Otimização",
                 objectives_list,
@@ -1857,6 +1858,48 @@ if dados_brutos is not None:
                     step=0.1,
                     help="Taxa de referência ACUMULADA do período"
                 ) / 100
+
+        # Meta de Retorno (opcional) — em um de dois modos:
+        #  - relativa: excesso mínimo sobre a taxa de referência no período
+        #  - absoluta: % ao ano, convertida no otimizador para o período
+        target_return = None
+        target_annual = None
+
+        use_meta = st.checkbox(
+            "🎯 Exigir meta de retorno mínima",
+            value=False,
+            help="Adiciona uma restrição de retorno mínimo à otimização"
+        )
+
+        if use_meta:
+            meta_col1, meta_col2 = st.columns([1, 2])
+
+            with meta_col1:
+                meta_mode = st.radio(
+                    "Tipo de meta",
+                    ["Relativa", "Absoluta"],
+                    horizontal=True,
+                    help="Relativa: % acima da taxa de referência. "
+                         "Absoluta: % ao ano, independente da referência."
+                )
+
+            with meta_col2:
+                if meta_mode == "Relativa":
+                    target_return = st.number_input(
+                        "Meta relativa (% acima da referência)",
+                        min_value=0.0,
+                        max_value=500.0,
+                        value=5.0,
+                        step=1.0
+                    ) / 100
+                else:
+                    target_annual = st.number_input(
+                        "Meta absoluta (% ao ano)",
+                        min_value=0.0,
+                        max_value=200.0,
+                        value=15.0,
+                        step=1.0
+                    ) / 100
 
 # NOVA SEÇÃO: Restrições Individuais
         use_individual_constraints = False
@@ -1977,21 +2020,17 @@ if dados_brutos is not None:
                             final_risk_free_rate = used_risk_free_rate
                         
                         # Definir tipo de objetivo
-                        if objective == "Maximizar Sharpe Ratio":
-                            obj_type = 'sharpe'
-                        elif objective == "Maximizar Sortino Ratio":
-                            obj_type = 'sortino'
-                        elif objective == "Minimizar Risco":
-                            obj_type = 'volatility'
-                        elif objective == "Maximizar Inclinação":
-                            obj_type = 'slope'
-                        elif objective == "Maximizar Inclinação/[(1-R²)×Vol]":
-                            obj_type = 'hc10'
-                        elif objective == "Maximizar Qualidade da Linearidade":
-                            obj_type = 'quality_linear'
-                        elif objective == "Maximizar Linearidade do Excesso":
-                            obj_type = 'excess_hc10'
-                        
+                        obj_type = {
+                            "Maximizar Sharpe Ratio": 'sharpe',
+                            "Maximizar Sortino Ratio": 'sortino',
+                            "Minimizar Risco": 'volatility',
+                            "Minimizar Under Water": 'under_water',
+                            "Maximizar Inclinação/[(1-R²)×Vol]": 'hc10',
+                            "Maximizar Qualidade da Linearidade": 'quality_linear',
+                            "Maximizar Linearidade do Excesso": 'excess_hc10',
+                            "Maximizar Sharpe do Excesso": 'excess_sharpe'
+                        }.get(objective, 'sharpe')
+
                         # Preparar restrições individuais se habilitadas
                         constraints_to_use = individual_constraints if use_individual_constraints else None
                         
@@ -2003,6 +2042,8 @@ if dados_brutos is not None:
                                 short_assets=short_assets,
                                 short_weights=short_weights,
                                 objective_type=obj_type,
+                                target_return=target_return,
+                                target_annual=target_annual,
                                 max_weight=max_weight,
                                 min_weight=min_weight,
                                 risk_free_rate=final_risk_free_rate,
@@ -2012,7 +2053,8 @@ if dados_brutos is not None:
                             # Otimização normal
                             result = optimizer.optimize_portfolio(
                                 objective_type=obj_type,
-                                target_return=None,
+                                target_return=target_return,
+                                target_annual=target_annual,
                                 max_weight=max_weight,
                                 min_weight=min_weight,
                                 risk_free_rate=final_risk_free_rate,
@@ -2020,8 +2062,18 @@ if dados_brutos is not None:
                             )
                         
                         if result['success']:
-                            st.success("🎉 Otimização concluída com sucesso!")
-                            
+                            if result.get('degraded'):
+                                # A meta pedida não era atingível: o otimizador
+                                # devolveu a melhor carteira viável em vez de abortar
+                                st.warning(
+                                    "⚠️ " + result.get(
+                                        'degraded_message',
+                                        "Meta não atingível — exibindo a melhor carteira viável."
+                                    )
+                                )
+                            else:
+                                st.success("🎉 Otimização concluída com sucesso!")
+
                             # Salvar pesos otimizados
                             st.session_state['optimal_weights'] = result['weights']
                             st.session_state['optimization_result'] = result
@@ -3085,10 +3137,18 @@ def execute_single_step_streamlit(df_otim, df_valid, df_completo, config, step_n
 
         objective_map = {
             'sharpe': 'sharpe',
+            'sortino': 'sortino',
             'volatility': 'volatility',
+            'under_water': 'under_water',
             'hc10': 'hc10',
-            'quality_linear': 'quality_linear'
+            'quality_linear': 'quality_linear',
+            'excess_hc10': 'excess_hc10',
+            'excess_sharpe': 'excess_sharpe'
         }
+
+        # Meta de retorno (opcional), aplicada em cada janela do walk-forward
+        cfg_target_return = config.get('target_return')
+        cfg_target_annual = config.get('target_annual')
 
         # Executar otimização
         if config['use_shorts'] and config['short_asset']:
@@ -3097,6 +3157,8 @@ def execute_single_step_streamlit(df_otim, df_valid, df_completo, config, step_n
                 short_assets=[config['short_asset']],
                 short_weights={config['short_asset']: config['short_weight']},
                 objective_type=objective_map[config['objective']],
+                target_return=cfg_target_return,
+                target_annual=cfg_target_annual,
                 max_weight=config['weight_max'],
                 min_weight=config['weight_min'],
                 risk_free_rate=risk_free_rate,
@@ -3105,6 +3167,8 @@ def execute_single_step_streamlit(df_otim, df_valid, df_completo, config, step_n
         else:
             result = optimizer.optimize_portfolio(
                 objective_type=objective_map[config['objective']],
+                target_return=cfg_target_return,
+                target_annual=cfg_target_annual,
                 max_weight=config['weight_max'],
                 min_weight=config['weight_min'],
                 risk_free_rate=risk_free_rate,
@@ -3346,12 +3410,16 @@ if dados_brutos is not None and df is not None:
         with obj_col1:
             st.markdown("**🎯 Objetivos**")
             obj_sharpe = st.checkbox("Maximizar Sharpe", value=True, key="auto_obj_sharpe")
+            obj_sortino = st.checkbox("Maximizar Sortino", value=False, key="auto_obj_sortino")
             obj_volatility = st.checkbox("Minimizar Risco", value=False, key="auto_obj_vol")
+            obj_under_water = st.checkbox("Minimizar Under Water", value=False, key="auto_obj_uw")
 
         with obj_col2:
             st.markdown("**🎯 Objetivos Avançados**")
             obj_hc10 = st.checkbox("Maximizar Inc/[(1-R²)×Vol]", value=False, key="auto_obj_hc10")
-            obj_quality = st.checkbox("Qualidade Linear", value=False, key="auto_obj_quality")
+            obj_quality = st.checkbox("Qualidade da Linearidade", value=False, key="auto_obj_quality")
+            obj_excess_hc10 = st.checkbox("Linearidade do Excesso", value=False, key="auto_obj_exc_hc10")
+            obj_excess_sharpe = st.checkbox("Sharpe do Excesso", value=False, key="auto_obj_exc_sharpe")
 
         # Configurações globais
         config_col1, config_col2 = st.columns(2)
@@ -3365,6 +3433,39 @@ if dados_brutos is not None and df is not None:
             st.markdown("**⚖️ Limites de Peso**")
             weight_min = st.number_input("Peso Mínimo (%)", min_value=0.0, max_value=100.0, value=0.0, step=1.0, key="auto_weight_min")
             weight_max = st.number_input("Peso Máximo (%)", min_value=0.0, max_value=100.0, value=30.0, step=1.0, key="auto_weight_max")
+
+        # Meta de retorno (opcional) aplicada em cada janela do walk-forward
+        st.markdown("**🎯 Meta de Retorno**")
+        auto_target_return = None
+        auto_target_annual = None
+
+        use_auto_meta = st.checkbox(
+            "Exigir meta de retorno mínima",
+            value=False,
+            key="auto_use_meta",
+            help="Aplica a meta em cada otimização do walk-forward"
+        )
+
+        if use_auto_meta:
+            meta_auto_col1, meta_auto_col2 = st.columns([1, 2])
+            with meta_auto_col1:
+                auto_meta_mode = st.radio(
+                    "Tipo", ["Relativa", "Absoluta"],
+                    horizontal=True, key="auto_meta_mode"
+                )
+            with meta_auto_col2:
+                if auto_meta_mode == "Relativa":
+                    auto_target_return = st.number_input(
+                        "Meta relativa (% acima da referência)",
+                        min_value=0.0, max_value=500.0, value=5.0, step=1.0,
+                        key="auto_meta_rel"
+                    ) / 100
+                else:
+                    auto_target_annual = st.number_input(
+                        "Meta absoluta (% ao ano)",
+                        min_value=0.0, max_value=200.0, value=15.0, step=1.0,
+                        key="auto_meta_abs"
+                    ) / 100
 
         # Opção de shorts
         st.markdown("**🔻 Posições Vendidas (Shorts)**")
@@ -3386,7 +3487,8 @@ if dados_brutos is not None and df is not None:
                 # Contar seleções
                 otim_count = sum([otim_3m, otim_6m, otim_1a, otim_2a, otim_3a])
                 rebal_count = sum([rebal_1sem, rebal_2sem, rebal_1mes, rebal_2mes, rebal_3mes])
-                obj_count = sum([obj_sharpe, obj_volatility, obj_hc10, obj_quality])
+                obj_count = sum([obj_sharpe, obj_sortino, obj_volatility, obj_under_water,
+                                 obj_hc10, obj_quality, obj_excess_hc10, obj_excess_sharpe])
 
                 if otim_count == 0 or rebal_count == 0 or obj_count == 0:
                     st.warning("⚠️ Selecione ao menos 1 opção de cada categoria")
@@ -3427,8 +3529,10 @@ if dados_brutos is not None and df is not None:
             '2mes': rebal_2mes, '3mes': rebal_3mes
         }
         objectives = {
-            'sharpe': obj_sharpe, 'volatility': obj_volatility,
-            'hc10': obj_hc10, 'quality_linear': obj_quality
+            'sharpe': obj_sharpe, 'sortino': obj_sortino,
+            'volatility': obj_volatility, 'under_water': obj_under_water,
+            'hc10': obj_hc10, 'quality_linear': obj_quality,
+            'excess_hc10': obj_excess_hc10, 'excess_sharpe': obj_excess_sharpe
         }
 
         if not any(otim_windows.values()):
@@ -3459,6 +3563,8 @@ if dados_brutos is not None and df is not None:
                             'use_shorts': use_auto_shorts,
                             'short_asset': short_asset_auto if use_auto_shorts else None,
                             'short_weight': short_weight_auto / 100 if use_auto_shorts else 0,
+                            'target_return': auto_target_return,
+                            'target_annual': auto_target_annual,
                             'desc': f"{otim_period}_{rebal_period}_{obj_key}"
                         }
                         configs.append(config)
