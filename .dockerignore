@@ -1,0 +1,29 @@
+# Controle de versão / metadados
+.git
+.gitignore
+.github
+
+# Ambientes de desenvolvimento
+.devcontainer
+.vscode
+.idea
+
+# Segredos locais (NUNCA vão para a imagem)
+.streamlit/secrets.toml
+*.env
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Documentação (opcional na imagem)
+README.md

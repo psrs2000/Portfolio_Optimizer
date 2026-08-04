@@ -21,11 +21,21 @@ def load_optimizer_from_private_repo():
         # Configurações do repositório privado
         GITHUB_USER = "psrs2000"  # Seu usuário
         PRIVATE_REPO = "Portfolio_Optimizer_PVT"  # Nome do repo privado
-        GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")  # Token do GitHub
-        
+
+        # Token do GitHub: tenta ler das secrets do Streamlit e, se não houver
+        # (ex.: deploy no EasyPanel/Docker), usa a variável de ambiente GITHUB_TOKEN.
+        GITHUB_TOKEN = ""
+        try:
+            GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
+        except Exception:
+            # Nenhum arquivo secrets.toml presente — segue para o fallback de env var
+            GITHUB_TOKEN = ""
+        if not GITHUB_TOKEN:
+            GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+
         if not GITHUB_TOKEN:
             st.error("❌ Token do GitHub não configurado!")
-            st.info("Configure GITHUB_TOKEN nas secrets do Streamlit")
+            st.info("Configure a variável de ambiente GITHUB_TOKEN (EasyPanel) ou nas secrets do Streamlit")
             return None
         
         # URL da API do GitHub para buscar o arquivo
@@ -102,10 +112,10 @@ if PortfolioOptimizer is None:
        - Clique em "Generate new token (classic)"
        - Marque: `repo` (acesso completo aos repositórios)
        
-    2. **Configurar token no Streamlit:**
-       - No Streamlit Cloud: Settings > Secrets
-       - Adicionar linha: `GITHUB_TOKEN = "seu_token_aqui"`
-       
+    2. **Configurar token:**
+       - No Streamlit Cloud: Settings > Secrets → `GITHUB_TOKEN = "seu_token_aqui"`
+       - No EasyPanel: aba **Environment** do serviço → variável `GITHUB_TOKEN=seu_token_aqui`
+
     3. **Verificar repositório privado:**
        - Nome: `Portfolio_Optimizer_PVT`
        - Arquivo: `optimizer.py` na raiz
@@ -789,6 +799,99 @@ st.markdown("""
         padding: 15px;
         border-radius: 10px;
         margin: 10px 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# =============================================================================
+# TEMA VISUAL MODERNIZADO (apenas aparência — não altera nenhum cálculo)
+# Inspirado em interfaces web profissionais: tipografia DM Sans, paleta
+# moderna, cantos arredondados, cards nas métricas, botões e abas estilizados.
+# =============================================================================
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+
+    :root {
+        --accent: #4f46e5;
+        --accent-hover: #4338ca;
+        --card-border: #e6e8f0;
+        --muted: #667085;
+        --ink: #1f2430;
+        --shadow: 0 1px 3px rgba(16,24,40,.06), 0 1px 2px rgba(16,24,40,.04);
+        --radius: 14px;
+    }
+
+    /* Fonte global */
+    html, body, .stApp, [class*="css"] {
+        font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    /* Títulos com mais presença */
+    h1, h2, h3 { font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
+    h1 { font-size: 2rem; }
+
+    /* Mais respiro no conteúdo principal */
+    .block-container { padding-top: 2.5rem; max-width: 1300px; }
+
+    /* Métricas viram cards elegantes */
+    [data-testid="stMetric"] {
+        background: #ffffff;
+        border: 1px solid var(--card-border);
+        border-radius: var(--radius);
+        padding: 16px 18px;
+        box-shadow: var(--shadow);
+        transition: transform .12s ease, box-shadow .12s ease;
+    }
+    [data-testid="stMetric"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(16,24,40,.10);
+    }
+    [data-testid="stMetricLabel"] p {
+        font-size: .78rem; font-weight: 600; color: var(--muted);
+        text-transform: uppercase; letter-spacing: .04em;
+    }
+    [data-testid="stMetricValue"] { font-weight: 700; color: var(--ink); }
+
+    /* Botões */
+    .stButton > button, .stDownloadButton > button {
+        border-radius: 10px; font-weight: 600;
+        border: 1px solid var(--card-border);
+        padding: .5rem 1.1rem; transition: all .15s ease;
+    }
+    .stButton > button:hover, .stDownloadButton > button:hover {
+        border-color: var(--accent); color: var(--accent);
+    }
+    .stButton > button[kind="primary"] {
+        background: var(--accent); color: #fff; border: none;
+    }
+    .stButton > button[kind="primary"]:hover { background: var(--accent-hover); color: #fff; }
+
+    /* Abas */
+    .stTabs [data-baseweb="tab-list"] { gap: 4px; border-bottom: 1px solid var(--card-border); }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px 8px 0 0; padding: 8px 16px; font-weight: 600;
+    }
+    .stTabs [aria-selected="true"] { color: var(--accent); }
+
+    /* Barra lateral */
+    [data-testid="stSidebar"] {
+        background: #fafbff; border-right: 1px solid var(--card-border);
+    }
+
+    /* Inputs com cantos arredondados */
+    .stSelectbox div[data-baseweb="select"] > div,
+    .stMultiSelect div[data-baseweb="select"] > div,
+    .stTextInput input, .stNumberInput input, .stDateInput input {
+        border-radius: 10px !important;
+    }
+
+    /* Tabelas e expanders com moldura de card */
+    [data-testid="stDataFrame"] {
+        border-radius: var(--radius); overflow: hidden; border: 1px solid var(--card-border);
+    }
+    [data-testid="stExpander"] {
+        border: 1px solid var(--card-border); border-radius: var(--radius); box-shadow: var(--shadow);
     }
 </style>
 """, unsafe_allow_html=True)
